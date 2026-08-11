@@ -76,6 +76,26 @@ function makeNode(
   };
 }
 
+function fromStoredNode(item: StoredNode): MapNode {
+  return {
+    id: item.id,
+    type: "businessNode",
+    position: { x: item.position_x, y: item.position_y },
+    data: {
+      heading: item.heading,
+      description: item.description ?? "",
+      parentId: item.parent_id,
+      sortOrder: item.sort_order,
+      collapsed: item.collapsed,
+      aiSolution: item.ai_solution,
+      repeatedWork: item.repeated_work ?? false,
+      shape: item.node_shape ?? "box",
+      color: item.node_color ?? "default",
+      placement: item.placement ?? "right",
+    },
+  };
+}
+
 function descendantsOf(nodes: MapNode[], id: string): Set<string> {
   const result = new Set<string>();
   const visit = (parentId: string) => {
@@ -217,7 +237,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [menu, setMenu] = useState<MenuState>(null);
-  const [connection, setConnection] = useState<"connecting" | "synced" | "local">("connecting");
+  const [connection, setConnection] = useState<"connecting" | "saving" | "synced" | "error">("connecting");
   const [loaded, setLoaded] = useState(false);
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [branchClipboard, setBranchClipboard] = useState<BranchClipboard>(null);
@@ -229,7 +249,10 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const isMarqueeSelecting = useRef(false);
   const mapStorageKey = `${STORAGE_KEY}:${mapId}`;
   const mapViewportKey = `${VIEWPORT_KEY}:${mapId}`;
-  const mapSyncKey = `${mapStorageKey}:uploaded`;
+  const saveQueue = useRef<MapNode[] | null>(null);
+  const saveRunning = useRef(false);
+  const viewportQueue = useRef<Viewport | null>(null);
+  const skipNextSave = useRef(false);
 
   const hydrateActions = (items: MapNode[]) => items.map((node) => ({
     ...node,
@@ -289,55 +312,123 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     return { ...node, selected: false, data };
   }
 
+  const rowsFor = (current: MapNode[]) => current.map(stripActions).map((node) => ({
+    id: node.id,
+    parent_id: node.data.parentId,
+    heading: node.data.heading,
+    description: node.data.description,
+    sort_order: node.data.sortOrder,
+    position_x: node.position.x,
+    position_y: node.position.y,
+    collapsed: node.data.collapsed,
+    ai_solution: node.data.aiSolution,
+    repeated_work: node.data.repeatedWork ?? false,
+    node_shape: node.data.shape ?? "box",
+    node_color: node.data.color ?? "default",
+    placement: node.data.placement ?? "right",
+  }));
+
+  const clearLegacyBrowserData = () => {
+    localStorage.removeItem(mapStorageKey);
+    localStorage.removeItem(`${mapStorageKey}:uploaded`);
+    localStorage.removeItem(mapViewportKey);
+    if (mapId === DEFAULT_MAP_ID) {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(VIEWPORT_KEY);
+    }
+    localStorage.removeItem("opscanvas-businesses-v1");
+  };
+
+  const saveMap = async (current: MapNode[]) => {
+    const supabase = createClient();
+    const { error } = await supabase.rpc("save_business_map_nodes", {
+      p_map_id: mapId,
+      p_nodes: rowsFor(current),
+    });
+    if (error) return false;
+    clearLegacyBrowserData();
+    return true;
+  };
+
+  const flushSaveQueue = async () => {
+    if (saveRunning.current) return;
+    saveRunning.current = true;
+    while (saveQueue.current) {
+      const current = saveQueue.current;
+      saveQueue.current = null;
+      setConnection("saving");
+      if (!await saveMap(current)) {
+        saveQueue.current ??= current;
+        setConnection("error");
+        break;
+      }
+      setConnection("synced");
+    }
+    saveRunning.current = false;
+  };
+
+  const queueSave = useEffectEvent((current: MapNode[]) => {
+    saveQueue.current = current.map(stripActions);
+    void flushSaveQueue();
+  });
+
+  const flushViewport = async () => {
+    const viewport = viewportQueue.current;
+    if (!viewport) return;
+    setConnection("saving");
+    const { error } = await createClient().from("business_maps").update({
+      viewport_x: viewport.x,
+      viewport_y: viewport.y,
+      viewport_zoom: viewport.zoom,
+      updated_at: new Date().toISOString(),
+    }).eq("id", mapId);
+    if (error) {
+      setConnection("error");
+      return;
+    }
+    if (viewportQueue.current === viewport) viewportQueue.current = null;
+    setConnection("synced");
+  };
+
   const loadMap = useEffectEvent(async () => {
     const supabase = createClient();
     const legacyDraft = mapId === DEFAULT_MAP_ID ? localStorage.getItem(STORAGE_KEY) : null;
     const cached = localStorage.getItem(mapStorageKey) ?? legacyDraft;
-    const hasUnsyncedDraft = Boolean(cached) && localStorage.getItem(mapSyncKey) !== "true";
-    const { data, error } = await supabase
-      .from("business_map_nodes")
-      .select("*")
-      .eq("map_id", mapId)
-      .order("sort_order");
+    const [{ data, error }, { data: mapData, error: mapError }] = await Promise.all([
+      supabase.from("business_map_nodes").select("*").eq("map_id", mapId).order("sort_order"),
+      supabase.from("business_maps").select("viewport_x,viewport_y,viewport_zoom").eq("id", mapId).single(),
+    ]);
 
     let initial: MapNode[];
     let hasSavedPositions = false;
-    if (!hasUnsyncedDraft && !error && data?.length) {
-      initial = (data as StoredNode[]).map((item) => ({
-        id: item.id,
-        type: "businessNode",
-        position: { x: item.position_x, y: item.position_y },
-        data: {
-          heading: item.heading,
-          description: item.description ?? "",
-          parentId: item.parent_id,
-          sortOrder: item.sort_order,
-          collapsed: item.collapsed,
-          aiSolution: item.ai_solution,
-          repeatedWork: item.repeated_work ?? false,
-          shape: item.node_shape ?? "box",
-          color: item.node_color ?? "default",
-          placement: item.placement ?? "right",
-        },
-      }));
+    if (cached) {
+      initial = JSON.parse(cached);
       hasSavedPositions = true;
+    } else if (!error && !mapError && data?.length) {
+      initial = (data as StoredNode[]).map(fromStoredNode);
+      hasSavedPositions = true;
+      skipNextSave.current = true;
       setConnection("synced");
+    } else if (!error && !mapError) {
+      initial = mapId === DEFAULT_MAP_ID
+        ? seedNodes.map((node) => node.id === "company" ? { ...node, data: { ...node.data, heading: mapTitle } } : node)
+        : [makeNode(`root-${mapId}`, null, mapTitle, "Business operating model", 0)];
     } else {
-      initial = cached
-        ? JSON.parse(cached)
-        : mapId === DEFAULT_MAP_ID
-          ? seedNodes.map((node) => node.id === "company" ? { ...node, data: { ...node.data, heading: mapTitle } } : node)
-          : [makeNode(`root-${mapId}`, null, mapTitle, "Business operating model", 0)];
-      hasSavedPositions = Boolean(cached);
-      setConnection("local");
+      setConnection("error");
+      setLoaded(true);
+      return;
     }
     const positioned = hasSavedPositions ? initial.map(stripActions) : layoutTree(initial.map(stripActions));
     setNodes(hydrateActions(positioned));
     setLoaded(true);
 
-    const legacyViewport = mapId === DEFAULT_MAP_ID ? localStorage.getItem(VIEWPORT_KEY) : null;
-    const savedViewport = localStorage.getItem(mapViewportKey) ?? legacyViewport;
-    pendingViewport.current = savedViewport ? JSON.parse(savedViewport) as Viewport : null;
+    const legacyViewport = localStorage.getItem(mapViewportKey)
+      ?? (mapId === DEFAULT_MAP_ID ? localStorage.getItem(VIEWPORT_KEY) : null);
+    pendingViewport.current = legacyViewport
+      ? JSON.parse(legacyViewport) as Viewport
+      : mapData?.viewport_zoom != null
+        ? { x: mapData.viewport_x ?? 0, y: mapData.viewport_y ?? 0, zoom: mapData.viewport_zoom }
+        : null;
     window.setTimeout(() => {
       if (!flowInstance.current) return;
       if (pendingViewport.current) void flowInstance.current.setViewport(pendingViewport.current);
@@ -350,53 +441,77 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     return () => window.clearTimeout(timer);
   }, []);
 
-  const saveMap = useEffectEvent(async (current: MapNode[]) => {
-    const clean = current.map(stripActions);
-    localStorage.setItem(mapStorageKey, JSON.stringify(clean));
-    const supabase = createClient();
-    const rows = clean.map((node) => ({
-      id: node.id,
-      map_id: mapId,
-      parent_id: node.data.parentId,
-      heading: node.data.heading,
-      description: node.data.description,
-      sort_order: node.data.sortOrder,
-      position_x: node.position.x,
-      position_y: node.position.y,
-      collapsed: node.data.collapsed,
-      ai_solution: node.data.aiSolution,
-      repeated_work: node.data.repeatedWork ?? false,
-      node_shape: node.data.shape ?? "box",
-      node_color: node.data.color ?? "default",
-      placement: node.data.placement ?? "right",
-    }));
-    const { error } = await supabase.from("business_map_nodes").upsert(rows);
-    if (error) { setConnection("local"); return; }
-    const ids = rows.map((row) => row.id);
-    const { data: remote } = await supabase.from("business_map_nodes").select("id").eq("map_id", mapId);
-    const removed = (remote ?? []).filter((row) => !ids.includes(row.id)).map((row) => row.id);
-    if (removed.length) await supabase.from("business_map_nodes").delete().in("id", removed);
-    await supabase.from("business_maps").update({ updated_at: new Date().toISOString() }).eq("id", mapId);
-    localStorage.setItem(mapSyncKey, "true");
+  const refreshNodesFromCloud = useEffectEvent(async () => {
+    if (!loaded || saveRunning.current || saveQueue.current) return;
+    const { data, error } = await createClient()
+      .from("business_map_nodes")
+      .select("*")
+      .eq("map_id", mapId)
+      .order("sort_order");
+    if (error) {
+      setConnection("error");
+      return;
+    }
+    skipNextSave.current = true;
+    setNodes(hydrateActions((data as StoredNode[]).map(fromStoredNode)));
     setConnection("synced");
   });
 
   useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`business-map-${mapId}`)
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "business_map_nodes",
+        filter: `map_id=eq.${mapId}`,
+      }, () => void refreshNodesFromCloud())
+      .subscribe();
+    const refresh = () => void refreshNodesFromCloud();
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      void supabase.removeChannel(channel);
+    };
+  }, [mapId]);
+
+  useEffect(() => {
     if (!loaded || !nodes.length) return;
-    const timer = window.setTimeout(() => void saveMap(nodes), 500);
+    if (skipNextSave.current) {
+      skipNextSave.current = false;
+      return;
+    }
+    const timer = window.setTimeout(() => queueSave(nodes), 150);
     return () => window.clearTimeout(timer);
   }, [nodes, loaded]);
 
+  const retryCloudSave = useEffectEvent(() => {
+    if (!nodes.length) void loadMap();
+    else {
+      void flushSaveQueue();
+      void flushViewport();
+    }
+  });
+
   useEffect(() => {
-    if (!loaded || connection !== "local" || !nodes.length) return;
-    const retry = () => void saveMap(nodes);
-    const timer = window.setInterval(retry, 30_000);
-    window.addEventListener("online", retry);
+    if (!loaded || connection !== "error") return;
+    const timer = window.setInterval(retryCloudSave, 2_000);
+    window.addEventListener("online", retryCloudSave);
     return () => {
       window.clearInterval(timer);
-      window.removeEventListener("online", retry);
+      window.removeEventListener("online", retryCloudSave);
     };
-  }, [loaded, connection, nodes]);
+  }, [loaded, connection, nodes.length]);
+
+  useEffect(() => {
+    const warnIfUnsaved = (event: BeforeUnloadEvent) => {
+      if (connection === "synced") return;
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warnIfUnsaved);
+    return () => window.removeEventListener("beforeunload", warnIfUnsaved);
+  }, [connection]);
 
   const edges: Edge[] = nodes
     .filter((node) => node.data.parentId && !node.hidden)
@@ -571,13 +686,14 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           <button onClick={(event) => { event.stopPropagation(); undo(); }} disabled={!historyState.canUndo} title="Undo"><Undo2 size={17} /></button>
           <button onClick={(event) => { event.stopPropagation(); redo(); }} disabled={!historyState.canRedo} title="Redo"><Redo2 size={17} /></button>
           {selectedCount > 1 && <span className="selection-count">{selectedCount} nodes selected</span>}
-          <span className={`sync-state ${connection}`}><i />{connection === "synced" ? "Supabase synced" : connection === "local" ? "Local draft" : "Connecting"}</span>
+          <span className={`sync-state ${connection}`}><i />{connection === "synced" ? "Saved online" : connection === "saving" ? "Saving..." : connection === "error" ? "Cloud unavailable" : "Connecting"}</span>
         </div>
       </header>
 
       <section className="workspace">
         <div className="canvas-wrap">
           {!loaded && <div className="loading">Opening map...</div>}
+          {loaded && connection === "error" && !nodes.length && <div className="loading cloud-error"><strong>Cloud connection unavailable</strong><span>Run the Supabase setup, then this page will reconnect automatically.</span></div>}
           <ReactFlow<MapNode, Edge>
             nodes={nodes}
             edges={edges}
@@ -617,7 +733,10 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
               flowInstance.current = instance;
               if (pendingViewport.current) void instance.setViewport(pendingViewport.current);
             }}
-            onMoveEnd={(_, viewport) => localStorage.setItem(mapViewportKey, JSON.stringify(viewport))}
+            onMoveEnd={(_, viewport) => {
+              viewportQueue.current = viewport;
+              void flushViewport();
+            }}
             minZoom={0.18}
             maxZoom={1.8}
             deleteKeyCode={null}

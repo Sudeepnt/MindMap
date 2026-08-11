@@ -5,24 +5,15 @@ import Link from "next/link";
 import { useEffect, useEffectEvent, useState } from "react";
 import { createClient } from "@/lib/supabase";
 
-const DEFAULT_MAP_ID = "00000000-0000-4000-8000-000000000001";
-const LIBRARY_KEY = "opscanvas-businesses-v1";
-
 type BusinessSummary = {
   id: string;
   title: string;
   updated_at: string;
 };
 
-const defaultBusiness: BusinessSummary = {
-  id: DEFAULT_MAP_ID,
-  title: "Digital Marketing Agency",
-  updated_at: new Date(0).toISOString(),
-};
-
 export function BusinessLibrary() {
   const [businesses, setBusinesses] = useState<BusinessSummary[]>([]);
-  const [connection, setConnection] = useState<"connecting" | "synced" | "local">("connecting");
+  const [connection, setConnection] = useState<"connecting" | "synced" | "error">("connecting");
   const [showCreate, setShowCreate] = useState(false);
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
@@ -34,22 +25,24 @@ export function BusinessLibrary() {
       .select("id,title,updated_at")
       .order("updated_at", { ascending: false });
 
-    if (!error && data?.length) {
-      setBusinesses(data);
-      setConnection("synced");
-      localStorage.setItem(LIBRARY_KEY, JSON.stringify(data));
+    if (error) {
+      setConnection("error");
       return;
     }
-
-    const cached = localStorage.getItem(LIBRARY_KEY);
-    setBusinesses(cached ? JSON.parse(cached) : [defaultBusiness]);
-    setConnection("local");
+    setBusinesses(data ?? []);
+    setConnection("synced");
   });
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadBusinesses(), 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (connection !== "error") return;
+    const timer = window.setInterval(() => void loadBusinesses(), 2_000);
+    return () => window.clearInterval(timer);
+  }, [connection]);
 
   const createBusiness = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -62,10 +55,13 @@ export function BusinessLibrary() {
     const supabase = createClient();
     const { error } = await supabase.from("business_maps").insert(nextBusiness);
 
-    const next = [nextBusiness, ...businesses];
-    setBusinesses(next);
-    localStorage.setItem(LIBRARY_KEY, JSON.stringify(next));
-    setConnection(error ? "local" : "synced");
+    if (error) {
+      setConnection("error");
+      setCreating(false);
+      return;
+    }
+    setBusinesses([nextBusiness, ...businesses]);
+    setConnection("synced");
     setCreating(false);
     setTitle("");
     setShowCreate(false);
@@ -75,7 +71,7 @@ export function BusinessLibrary() {
     <main className="library-shell">
       <header className="library-topbar">
         <div className="brand"><span className="brand-mark"><Sparkles size={18} /></span><span>deepmap.ai</span></div>
-        <span className={`sync-state ${connection}`}><i />{connection === "synced" ? "Supabase synced" : connection === "local" ? "Local draft" : "Connecting"}</span>
+        <span className={`sync-state ${connection}`}><i />{connection === "synced" ? "Saved online" : connection === "error" ? "Cloud unavailable" : "Connecting"}</span>
       </header>
 
       <section className="library-content">

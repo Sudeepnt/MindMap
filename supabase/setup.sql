@@ -7,6 +7,9 @@ create table if not exists public.business_maps (
   id uuid primary key default gen_random_uuid(),
   title text not null,
   description text not null default '',
+  viewport_x real,
+  viewport_y real,
+  viewport_zoom real,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -31,6 +34,9 @@ create table if not exists public.business_map_nodes (
 );
 
 alter table public.business_maps add column if not exists description text not null default '';
+alter table public.business_maps add column if not exists viewport_x real;
+alter table public.business_maps add column if not exists viewport_y real;
+alter table public.business_maps add column if not exists viewport_zoom real;
 alter table public.business_map_nodes add column if not exists repeated_work boolean not null default false;
 alter table public.business_map_nodes add column if not exists node_shape text not null default 'box';
 alter table public.business_map_nodes add column if not exists node_color text not null default 'default';
@@ -79,6 +85,68 @@ create policy "prototype nodes delete" on public.business_map_nodes for delete u
 grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on public.business_maps to anon, authenticated;
 grant select, insert, update, delete on public.business_map_nodes to anon, authenticated;
+
+create or replace function public.save_business_map_nodes(p_map_id uuid, p_nodes jsonb)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  insert into public.business_map_nodes (
+    id, map_id, parent_id, heading, description, sort_order, position_x,
+    position_y, collapsed, ai_solution, repeated_work, node_shape, node_color,
+    placement, updated_at
+  )
+  select
+    node.id, p_map_id, null, node.heading, node.description, node.sort_order,
+    node.position_x, node.position_y, node.collapsed, node.ai_solution,
+    node.repeated_work, node.node_shape, node.node_color, node.placement, now()
+  from jsonb_to_recordset(p_nodes) as node(
+    id text, parent_id text, heading text, description text, sort_order integer,
+    position_x real, position_y real, collapsed boolean, ai_solution boolean,
+    repeated_work boolean, node_shape text, node_color text, placement text
+  )
+  on conflict (id) do update set
+    heading = excluded.heading,
+    description = excluded.description,
+    sort_order = excluded.sort_order,
+    position_x = excluded.position_x,
+    position_y = excluded.position_y,
+    collapsed = excluded.collapsed,
+    ai_solution = excluded.ai_solution,
+    repeated_work = excluded.repeated_work,
+    node_shape = excluded.node_shape,
+    node_color = excluded.node_color,
+    placement = excluded.placement,
+    updated_at = now();
+
+  update public.business_map_nodes target
+  set parent_id = source.parent_id
+  from jsonb_to_recordset(p_nodes) as source(id text, parent_id text)
+  where target.id = source.id and target.map_id = p_map_id;
+
+  delete from public.business_map_nodes
+  where map_id = p_map_id
+    and not (id = any(select jsonb_array_elements(p_nodes)->>'id'));
+
+  update public.business_maps set updated_at = now() where id = p_map_id;
+end;
+$$;
+
+grant execute on function public.save_business_map_nodes(uuid, jsonb) to anon, authenticated;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'business_map_nodes'
+  ) then
+    alter publication supabase_realtime add table public.business_map_nodes;
+  end if;
+end $$;
 
 create table if not exists public.app_heartbeats (
   id bigint generated always as identity primary key,

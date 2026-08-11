@@ -32,6 +32,10 @@ button { color: inherit; }
 .sync-state { margin-left: 9px; display: flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; background: white; color: var(--muted); font-size: 12px; }
 .sync-state i { width: 7px; height: 7px; border-radius: 50%; background: #c29028; }
 .sync-state.synced i { background: #2d9a72; box-shadow: 0 0 0 3px #d9eee5; }
+.sync-state.saving i, .sync-state.connecting i { animation: status-pulse 1s ease-in-out infinite; }
+.sync-state.error { cursor: pointer; color: #a43d31; border-color: #e2b4aa; }
+.sync-state.error i { background: #c84f3f; }
+@keyframes status-pulse { 50% { opacity: .35; transform: scale(.8); } }
 
 .workspace { height: calc(100vh - 64px); }
 .side-panel { padding: 36px 27px; border-right: 1px solid var(--line); background: var(--panel); position: relative; z-index: 3; }
@@ -55,6 +59,9 @@ button { color: inherit; }
 .react-flow__controls-button { width: 34px; height: 34px; border-bottom-color: var(--line); background: white; }
 .react-flow__minimap { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #f1efe8; box-shadow: none; }
 .loading { position: absolute; inset: 0; z-index: 7; display: grid; place-items: center; color: var(--muted); background: var(--paper); }
+.loading.cloud-error { align-content: center; gap: 8px; text-align: center; }
+.loading.cloud-error strong { color: var(--ink); font-family: var(--font-display), sans-serif; font-size: 18px; }
+.loading.cloud-error span { font-size: 13px; }
 
 .map-node { width: 230px; min-height: 86px; padding: 17px 19px 16px; border: 1px solid #c8c5bb; border-radius: 10px; background: #fffefa; box-shadow: 0 5px 15px rgba(52, 54, 48, .07); transition: border-color .16s, box-shadow .16s, transform .16s; }
 .map-node.is-compact { min-height: 54px; padding-top: 16px; padding-bottom: 15px; }

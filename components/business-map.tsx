@@ -229,6 +229,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const isMarqueeSelecting = useRef(false);
   const mapStorageKey = `${STORAGE_KEY}:${mapId}`;
   const mapViewportKey = `${VIEWPORT_KEY}:${mapId}`;
+  const mapSyncKey = `${mapStorageKey}:uploaded`;
 
   const hydrateActions = (items: MapNode[]) => items.map((node) => ({
     ...node,
@@ -290,6 +291,9 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
 
   const loadMap = useEffectEvent(async () => {
     const supabase = createClient();
+    const legacyDraft = mapId === DEFAULT_MAP_ID ? localStorage.getItem(STORAGE_KEY) : null;
+    const cached = localStorage.getItem(mapStorageKey) ?? legacyDraft;
+    const hasUnsyncedDraft = Boolean(cached) && localStorage.getItem(mapSyncKey) !== "true";
     const { data, error } = await supabase
       .from("business_map_nodes")
       .select("*")
@@ -298,7 +302,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
 
     let initial: MapNode[];
     let hasSavedPositions = false;
-    if (!error && data?.length) {
+    if (!hasUnsyncedDraft && !error && data?.length) {
       initial = (data as StoredNode[]).map((item) => ({
         id: item.id,
         type: "businessNode",
@@ -319,8 +323,6 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       hasSavedPositions = true;
       setConnection("synced");
     } else {
-      const legacyDraft = mapId === DEFAULT_MAP_ID ? localStorage.getItem(STORAGE_KEY) : null;
-      const cached = localStorage.getItem(mapStorageKey) ?? legacyDraft;
       initial = cached
         ? JSON.parse(cached)
         : mapId === DEFAULT_MAP_ID
@@ -375,6 +377,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     const removed = (remote ?? []).filter((row) => !ids.includes(row.id)).map((row) => row.id);
     if (removed.length) await supabase.from("business_map_nodes").delete().in("id", removed);
     await supabase.from("business_maps").update({ updated_at: new Date().toISOString() }).eq("id", mapId);
+    localStorage.setItem(mapSyncKey, "true");
     setConnection("synced");
   });
 
@@ -383,6 +386,17 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     const timer = window.setTimeout(() => void saveMap(nodes), 500);
     return () => window.clearTimeout(timer);
   }, [nodes, loaded]);
+
+  useEffect(() => {
+    if (!loaded || connection !== "local" || !nodes.length) return;
+    const retry = () => void saveMap(nodes);
+    const timer = window.setInterval(retry, 30_000);
+    window.addEventListener("online", retry);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("online", retry);
+    };
+  }, [loaded, connection, nodes]);
 
   const edges: Edge[] = nodes
     .filter((node) => node.data.parentId && !node.hidden)
@@ -551,7 +565,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   return (
     <main className="app-shell" onClick={() => setMenu(null)}>
       <header className="topbar">
-        <div className="brand"><span className="brand-mark"><Sparkles size={18} /></span><span>OpsCanvas</span></div>
+        <div className="brand"><span className="brand-mark"><Sparkles size={18} /></span><span>deepmap.ai</span></div>
         <div className="map-title"><Link href="/"><ArrowLeft size={14} />All businesses</Link><ChevronRight size={14} /><strong>{mapTitle}</strong></div>
         <div className="top-actions">
           <button onClick={(event) => { event.stopPropagation(); undo(); }} disabled={!historyState.canUndo} title="Undo"><Undo2 size={17} /></button>

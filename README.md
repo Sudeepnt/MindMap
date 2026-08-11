@@ -1,4 +1,4 @@
-# OpsCanvas
+# deepmap.ai
 
 A Supabase-backed library of left-to-right business operation maps with unlimited children, automatic layout, AI and repeated-work markers, branch collapse, drag persistence, pan, zoom, and undo/redo.
 

@@ -7,7 +7,7 @@ const bodyFont = DM_Sans({ subsets: ["latin"], variable: "--font-body" });
 const displayFont = Space_Grotesk({ subsets: ["latin"], variable: "--font-display" });
 
 export const metadata: Metadata = {
-  title: "OpsCanvas",
+  title: "deepmap.ai",
   description: "Map a business and find opportunities for automation.",
 };
 

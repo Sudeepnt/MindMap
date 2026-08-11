@@ -74,7 +74,7 @@ export function BusinessLibrary() {
   return (
     <main className="library-shell">
       <header className="library-topbar">
-        <div className="brand"><span className="brand-mark"><Sparkles size={18} /></span><span>OpsCanvas</span></div>
+        <div className="brand"><span className="brand-mark"><Sparkles size={18} /></span><span>deepmap.ai</span></div>
         <span className={`sync-state ${connection}`}><i />{connection === "synced" ? "Supabase synced" : connection === "local" ? "Local draft" : "Connecting"}</span>
       </header>
 

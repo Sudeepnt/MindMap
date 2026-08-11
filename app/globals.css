@@ -54,6 +54,7 @@ button { color: inherit; }
 .loading { position: absolute; inset: 0; z-index: 7; display: grid; place-items: center; color: var(--muted); background: var(--paper); }
 
 .map-node { width: 230px; min-height: 86px; padding: 17px 19px 16px; border: 1px solid #c8c5bb; border-radius: 10px; background: #fffefa; box-shadow: 0 5px 15px rgba(52, 54, 48, .07); transition: border-color .16s, box-shadow .16s, transform .16s; }
+.map-node.is-compact { min-height: 54px; padding-top: 16px; padding-bottom: 15px; }
 .map-node:hover { border-color: #8d9089; box-shadow: 0 9px 24px rgba(52, 54, 48, .11); }
 .map-node.is-selected { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(228, 111, 62, .16), 0 10px 25px rgba(52, 54, 48, .12); }
 .map-node.is-ai { border-color: var(--teal); background: linear-gradient(145deg, #f7fffc, var(--teal-soft)); }

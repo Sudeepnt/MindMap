@@ -130,7 +130,7 @@ function layoutTree(nodes: MapNode[]): MapNode[] {
 
 function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
   return (
-    <div className={`map-node ${selected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""}`}>
+    <div className={`map-node ${!data.description ? "is-compact" : ""} ${selected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""}`}>
       <Handle type="target" position={Position.Left} className="node-handle" />
       <button
         className="node-collapse nodrag"

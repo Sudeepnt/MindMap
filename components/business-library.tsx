@@ -5,15 +5,36 @@ import Link from "next/link";
 import { useEffect, useEffectEvent, useState } from "react";
 import { createClient } from "@/lib/supabase";
 
+type ConnectionState = "connecting" | "synced" | "offline" | "setup" | "error";
+
 type BusinessSummary = {
   id: string;
   title: string;
   updated_at: string;
 };
 
+const defaultBusiness: BusinessSummary = {
+  id: "00000000-0000-4000-8000-000000000001",
+  title: "Digital Marketing Agency",
+  updated_at: new Date(0).toISOString(),
+};
+
+function connectionError(code?: string): ConnectionState {
+  if (!navigator.onLine) return "offline";
+  return code === "PGRST205" || code === "PGRST202" || code === "42703" ? "setup" : "error";
+}
+
+function connectionLabel(connection: ConnectionState) {
+  if (connection === "synced") return "Saved online";
+  if (connection === "offline") return "No internet";
+  if (connection === "setup") return "Database setup required";
+  if (connection === "error") return "Sync error";
+  return "Connecting";
+}
+
 export function BusinessLibrary() {
   const [businesses, setBusinesses] = useState<BusinessSummary[]>([]);
-  const [connection, setConnection] = useState<"connecting" | "synced" | "error">("connecting");
+  const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [showCreate, setShowCreate] = useState(false);
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
@@ -26,10 +47,11 @@ export function BusinessLibrary() {
       .order("updated_at", { ascending: false });
 
     if (error) {
-      setConnection("error");
+      setBusinesses([defaultBusiness]);
+      setConnection(connectionError(error.code));
       return;
     }
-    setBusinesses(data ?? []);
+    setBusinesses(data?.length ? data : [defaultBusiness]);
     setConnection("synced");
   });
 
@@ -39,9 +61,17 @@ export function BusinessLibrary() {
   }, []);
 
   useEffect(() => {
-    if (connection !== "error") return;
+    if (connection === "synced" || connection === "connecting") return;
     const timer = window.setInterval(() => void loadBusinesses(), 2_000);
-    return () => window.clearInterval(timer);
+    const markOffline = () => setConnection("offline");
+    const reconnect = () => void loadBusinesses();
+    window.addEventListener("offline", markOffline);
+    window.addEventListener("online", reconnect);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("offline", markOffline);
+      window.removeEventListener("online", reconnect);
+    };
   }, [connection]);
 
   const createBusiness = async (event: React.FormEvent) => {
@@ -56,7 +86,7 @@ export function BusinessLibrary() {
     const { error } = await supabase.from("business_maps").insert(nextBusiness);
 
     if (error) {
-      setConnection("error");
+      setConnection(connectionError(error.code));
       setCreating(false);
       return;
     }
@@ -71,7 +101,7 @@ export function BusinessLibrary() {
     <main className="library-shell">
       <header className="library-topbar">
         <div className="brand"><span className="brand-mark"><Sparkles size={18} /></span><span>deepmap.ai</span></div>
-        <span className={`sync-state ${connection}`}><i />{connection === "synced" ? "Saved online" : connection === "error" ? "Cloud unavailable" : "Connecting"}</span>
+        <span className={`sync-state ${connection}`}><i />{connectionLabel(connection)}</span>
       </header>
 
       <section className="library-content">

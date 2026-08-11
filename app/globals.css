@@ -33,8 +33,8 @@ button { color: inherit; }
 .sync-state i { width: 7px; height: 7px; border-radius: 50%; background: #c29028; }
 .sync-state.synced i { background: #2d9a72; box-shadow: 0 0 0 3px #d9eee5; }
 .sync-state.saving i, .sync-state.connecting i { animation: status-pulse 1s ease-in-out infinite; }
-.sync-state.error { cursor: pointer; color: #a43d31; border-color: #e2b4aa; }
-.sync-state.error i { background: #c84f3f; }
+.sync-state.error, .sync-state.setup, .sync-state.offline { color: #a43d31; border-color: #e2b4aa; }
+.sync-state.error i, .sync-state.setup i, .sync-state.offline i { background: #c84f3f; }
 @keyframes status-pulse { 50% { opacity: .35; transform: scale(.8); } }
 
 .workspace { height: calc(100vh - 64px); }

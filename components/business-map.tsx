@@ -45,6 +45,22 @@ const VIEWPORT_KEY = "opscanvas-viewport-v1";
 const X_GAP = 330;
 const Y_GAP = 150;
 
+type ConnectionState = "connecting" | "saving" | "synced" | "offline" | "setup" | "error";
+
+function connectionError(code?: string): ConnectionState {
+  if (!navigator.onLine) return "offline";
+  return code === "PGRST205" || code === "PGRST202" || code === "42703" ? "setup" : "error";
+}
+
+function connectionLabel(connection: ConnectionState) {
+  if (connection === "synced") return "Saved online";
+  if (connection === "saving") return "Saving...";
+  if (connection === "offline") return "No internet";
+  if (connection === "setup") return "Database setup required";
+  if (connection === "error") return "Sync error";
+  return "Connecting";
+}
+
 const seedNodes: MapNode[] = [
   makeNode("company", null, "Digital Marketing Agency", "Business operating model", 0),
   makeNode("departments", "company", "Departments", "Core functions of the business", 0),
@@ -237,7 +253,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [menu, setMenu] = useState<MenuState>(null);
-  const [connection, setConnection] = useState<"connecting" | "saving" | "synced" | "error">("connecting");
+  const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [loaded, setLoaded] = useState(false);
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [branchClipboard, setBranchClipboard] = useState<BranchClipboard>(null);
@@ -345,9 +361,9 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       p_map_id: mapId,
       p_nodes: rowsFor(current),
     });
-    if (error) return false;
+    if (error) return error;
     clearLegacyBrowserData();
-    return true;
+    return null;
   };
 
   const flushSaveQueue = async () => {
@@ -357,9 +373,10 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       const current = saveQueue.current;
       saveQueue.current = null;
       setConnection("saving");
-      if (!await saveMap(current)) {
+      const error = await saveMap(current);
+      if (error) {
         saveQueue.current ??= current;
-        setConnection("error");
+        setConnection(connectionError(error.code));
         break;
       }
       setConnection("synced");
@@ -383,7 +400,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       updated_at: new Date().toISOString(),
     }).eq("id", mapId);
     if (error) {
-      setConnection("error");
+      setConnection(connectionError(error.code));
       return;
     }
     if (viewportQueue.current === viewport) viewportQueue.current = null;
@@ -414,7 +431,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
         ? seedNodes.map((node) => node.id === "company" ? { ...node, data: { ...node.data, heading: mapTitle } } : node)
         : [makeNode(`root-${mapId}`, null, mapTitle, "Business operating model", 0)];
     } else {
-      setConnection("error");
+      setConnection(connectionError(error?.code ?? mapError?.code));
       setLoaded(true);
       return;
     }
@@ -449,7 +466,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       .eq("map_id", mapId)
       .order("sort_order");
     if (error) {
-      setConnection("error");
+      setConnection(connectionError(error.code));
       return;
     }
     skipNextSave.current = true;
@@ -495,7 +512,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   });
 
   useEffect(() => {
-    if (!loaded || connection !== "error") return;
+    if (!loaded || connection === "synced" || connection === "saving" || connection === "connecting") return;
     const timer = window.setInterval(retryCloudSave, 2_000);
     window.addEventListener("online", retryCloudSave);
     return () => {
@@ -686,14 +703,16 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           <button onClick={(event) => { event.stopPropagation(); undo(); }} disabled={!historyState.canUndo} title="Undo"><Undo2 size={17} /></button>
           <button onClick={(event) => { event.stopPropagation(); redo(); }} disabled={!historyState.canRedo} title="Redo"><Redo2 size={17} /></button>
           {selectedCount > 1 && <span className="selection-count">{selectedCount} nodes selected</span>}
-          <span className={`sync-state ${connection}`}><i />{connection === "synced" ? "Saved online" : connection === "saving" ? "Saving..." : connection === "error" ? "Cloud unavailable" : "Connecting"}</span>
+          <span className={`sync-state ${connection}`}><i />{connectionLabel(connection)}</span>
         </div>
       </header>
 
       <section className="workspace">
         <div className="canvas-wrap">
           {!loaded && <div className="loading">Opening map...</div>}
-          {loaded && connection === "error" && !nodes.length && <div className="loading cloud-error"><strong>Cloud connection unavailable</strong><span>Run the Supabase setup, then this page will reconnect automatically.</span></div>}
+          {loaded && connection === "offline" && !nodes.length && <div className="loading cloud-error"><strong>No internet connection</strong><span>Reconnect and this page will try again automatically.</span></div>}
+          {loaded && connection === "setup" && !nodes.length && <div className="loading cloud-error"><strong>Database setup required</strong><span>Run the Supabase setup SQL, then this page will reconnect automatically.</span></div>}
+          {loaded && connection === "error" && !nodes.length && <div className="loading cloud-error"><strong>Could not sync the map</strong><span>The app will retry automatically.</span></div>}
           <ReactFlow<MapNode, Edge>
             nodes={nodes}
             edges={edges}

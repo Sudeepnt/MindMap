@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "outputDirectory": null,
+  "crons": [
+    {
+      "path": "/api/heartbeat",
+      "schedule": "0 9 * * *"
+    }
+  ]
+}

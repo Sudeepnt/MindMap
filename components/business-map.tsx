@@ -1,0 +1,707 @@
+"use client";
+
+import {
+  Background,
+  BackgroundVariant,
+  Controls,
+  Handle,
+  MarkerType,
+  MiniMap,
+  Position,
+  ReactFlow,
+  ReactFlowProvider,
+  SelectionMode,
+  applyNodeChanges,
+  type Edge,
+  type NodeChange,
+  type NodeProps,
+  type ReactFlowInstance,
+  type Viewport,
+} from "@xyflow/react";
+import {
+  ArrowLeft,
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  ClipboardCopy,
+  ClipboardPaste,
+  Copy,
+  Edit3,
+  Plus,
+  Redo2,
+  Sparkles,
+  Trash2,
+  Undo2,
+  X,
+} from "lucide-react";
+import Link from "next/link";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import type { MapNode, MapNodeData } from "@/lib/types";
+
+const DEFAULT_MAP_ID = "00000000-0000-4000-8000-000000000001";
+const STORAGE_KEY = "opscanvas-draft-v2";
+const VIEWPORT_KEY = "opscanvas-viewport-v2";
+const X_GAP = 330;
+const Y_GAP = 150;
+
+type SeedOptions = {
+  aiSolution?: boolean;
+  repeatedWork?: boolean;
+  shape?: MapNodeData["shape"];
+  color?: MapNodeData["color"];
+  placement?: MapNodeData["placement"];
+};
+
+const seedNodes: MapNode[] = [
+  makeNode("company", null, "Digital Marketing Agency", "Business operating model", 0),
+  makeNode("departments", "company", "Departments", "Core functions of the business", 0, { color: "rose" }),
+  makeNode("sales", "departments", "INTERNAL - SALES & BUSINESS DEVELOPMENT", "Turn qualified demand into clients", 0, { color: "blue" }),
+  makeNode("operations", "departments", "Operations", "Deliver work consistently", 2),
+  makeNode("finance", "departments", "Finance", "Cash flow, invoicing and reporting", 3),
+  makeNode("people", "departments", "People & HR", "Hiring, onboarding and support", 4),
+  makeNode("client-onboarding", "departments", "Client Onboarding", "", 5),
+  makeNode("research", "departments", "Research", "", 6),
+  makeNode("strategy", "departments", "Strategy", "", 7),
+  makeNode("creative-production", "departments", "Creative Production", "", 8),
+
+  makeNode("lead-gen", "sales", "Lead Generation", "", 0),
+  makeNode("qualification", "sales", "Lead Qualification", "", 1),
+  makeNode("discovery", "sales", "Discovery Call", "", 2),
+  makeNode("proposal", "sales", "Proposal", "", 3),
+  makeNode("contact-payment", "sales", "Contact+Payment", "", 4),
+
+  makeNode("cold-email", "lead-gen", "Cold Email", "", 0),
+  makeNode("linkedin-outreach", "lead-gen", "LinkedIn Outreach", "", 1),
+  makeNode("seo", "lead-gen", "SEO", "", 2),
+  makeNode("referrals", "lead-gen", "Referrals", "", 3),
+  makeNode("automated-seo-ai", "seo", "Automated SEO AI", "", 0, { aiSolution: true, color: "yellow", shape: "rounded" }),
+
+  makeNode("check-business-fit", "qualification", "Check Business Fit", "", 0),
+  makeNode("check-budget", "qualification", "Check Budget", "", 1),
+  makeNode("identify-decision-maker", "qualification", "Identify Decision Maker", "", 2),
+
+  makeNode("define-services", "proposal", "Define Services", "", 0),
+  makeNode("calculate-price", "proposal", "Calculate Price", "", 1),
+  makeNode("define-deliverables", "proposal", "Define Deliverables", "", 2),
+
+  makeNode("negotiate-terms", "contact-payment", "Negotiate Terms", "", 0),
+  makeNode("sign-contract", "contact-payment", "Sign Contract", "", 1, { repeatedWork: true, color: "yellow", shape: "rounded" }),
+  makeNode("create-invoice", "contact-payment", "Create Invoice", "", 2, { repeatedWork: true, color: "yellow", shape: "rounded" }),
+  makeNode("receive-payment", "contact-payment", "Receive Payment", "", 3, { repeatedWork: true, color: "yellow", shape: "rounded" }),
+
+  makeNode("assign-team", "operations", "Assign Team", "", 0),
+  makeNode("create-client-workspace", "operations", "Create Client Workspace", "", 1),
+  makeNode("create-tasks", "assign-team", "Create Tasks", "", 0),
+  makeNode("track-deadlines", "create-tasks", "Track Deadlines", "", 0),
+  makeNode("automated-ai-telemetry", "track-deadlines", "Automated AI Telemetry", "", 0, { aiSolution: true, color: "yellow", shape: "rounded" }),
+];
+
+function makeNode(
+  id: string,
+  parentId: string | null,
+  heading: string,
+  description: string,
+  sortOrder: number,
+  options: SeedOptions = {},
+): MapNode {
+  return {
+    id,
+    type: "businessNode",
+    position: { x: 0, y: 0 },
+    data: {
+      heading,
+      description,
+      parentId,
+      sortOrder,
+      collapsed: false,
+      aiSolution: options.aiSolution ?? false,
+      repeatedWork: options.repeatedWork ?? false,
+      shape: options.shape ?? "box",
+      color: options.color ?? "default",
+      placement: options.placement ?? "right",
+    },
+  };
+}
+
+function descendantsOf(nodes: MapNode[], id: string): Set<string> {
+  const result = new Set<string>();
+  const visit = (parentId: string) => {
+    nodes.filter((node) => node.data.parentId === parentId).forEach((child) => {
+      result.add(child.id);
+      visit(child.id);
+    });
+  };
+  visit(id);
+  return result;
+}
+
+function layoutTree(nodes: MapNode[]): MapNode[] {
+  if (!nodes.length) return nodes;
+  const byParent = new Map<string | null, MapNode[]>();
+  nodes.forEach((node) => {
+    if (node.data.placement === "below") return;
+    const group = byParent.get(node.data.parentId) ?? [];
+    group.push(node);
+    byParent.set(node.data.parentId, group);
+  });
+  byParent.forEach((group) => group.sort((a, b) => a.data.sortOrder - b.data.sortOrder));
+
+  let nextLeafY = 0;
+  const positions = new Map<string, { x: number; y: number }>();
+  const hidden = new Set<string>();
+
+  const estimatedHeight = (node: MapNode) => node.data.shape === "diamond" ? 190 : node.data.description ? 96 : 54;
+  const verticalSpan = (node: MapNode): number => {
+    const belowChildren = nodes
+      .filter((child) => child.data.parentId === node.id && child.data.placement === "below")
+      .sort((a, b) => a.data.sortOrder - b.data.sortOrder);
+    if (!belowChildren.length || node.data.collapsed) return estimatedHeight(node);
+    return estimatedHeight(node) + 70 + belowChildren.reduce((sum, child, index) => (
+      sum + verticalSpan(child) + (index ? 44 : 0)
+    ), 0);
+  };
+  const place = (node: MapNode, depth: number): number => {
+    const children = byParent.get(node.id) ?? [];
+    if (node.data.collapsed) {
+      descendantsOf(nodes, node.id).forEach((id) => hidden.add(id));
+    }
+    const visibleChildren = node.data.collapsed ? [] : children;
+    let centerY: number;
+    if (!visibleChildren.length) {
+      centerY = nextLeafY + estimatedHeight(node) / 2;
+      nextLeafY += Math.max(Y_GAP, verticalSpan(node) + 44);
+    } else {
+      const childYs = visibleChildren.map((child) => place(child, depth + 1));
+      centerY = (childYs[0] + childYs[childYs.length - 1]) / 2;
+      const verticalBottom = centerY - estimatedHeight(node) / 2 + verticalSpan(node);
+      nextLeafY = Math.max(nextLeafY, verticalBottom + 44);
+    }
+    positions.set(node.id, { x: depth * X_GAP, y: centerY - estimatedHeight(node) / 2 });
+    return centerY;
+  };
+
+  (byParent.get(null) ?? []).forEach((root) => place(root, 0));
+  const placeMixedBranches = (node: MapNode) => {
+    const parentPosition = positions.get(node.id);
+    if (!parentPosition || node.data.collapsed) return;
+
+    const rightChildren = byParent.get(node.id) ?? [];
+    const unplacedRight = rightChildren.filter((child) => !positions.has(child.id));
+    const rightStartY = parentPosition.y - ((unplacedRight.length - 1) * Y_GAP) / 2;
+    unplacedRight.forEach((child, index) => {
+      positions.set(child.id, { x: parentPosition.x + X_GAP, y: rightStartY + index * Y_GAP });
+    });
+    rightChildren.forEach(placeMixedBranches);
+
+    const belowChildren = nodes
+      .filter((child) => child.data.parentId === node.id && child.data.placement === "below")
+      .sort((a, b) => a.data.sortOrder - b.data.sortOrder);
+    let belowY = parentPosition.y + estimatedHeight(node) + 70;
+    belowChildren.forEach((child) => {
+      positions.set(child.id, { x: parentPosition.x, y: belowY });
+      belowY += estimatedHeight(child) + 44;
+      placeMixedBranches(child);
+    });
+  };
+  (byParent.get(null) ?? []).forEach(placeMixedBranches);
+  const minY = Math.min(...Array.from(positions.values(), (position) => position.y), 0);
+  return nodes.map((node) => ({
+    ...node,
+    hidden: hidden.has(node.id),
+    position: positions.has(node.id)
+      ? { x: positions.get(node.id)!.x, y: positions.get(node.id)!.y - minY }
+      : node.position,
+  }));
+}
+
+function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
+  return (
+    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${!data.description ? "is-compact" : ""} ${selected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""}`}>
+      <Handle type="target" position={Position.Left} className="node-handle" />
+      <Handle id="top-target" type="target" position={Position.Top} className="node-handle vertical-handle" />
+      <button
+        className="node-collapse nodrag"
+        onClick={() => data.onToggle?.(id)}
+        aria-label={data.collapsed ? "Expand children" : "Collapse children"}
+        hidden={!data.childCount}
+      >
+        {data.collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+        {data.collapsed && <span>{data.childCount}</span>}
+      </button>
+      {data.aiSolution && (
+        <span className="ai-badge"><Sparkles size={11} /> AI solution</span>
+      )}
+      {data.repeatedWork && (
+        <span className="repeated-badge"><Redo2 size={11} /> Most repeated work</span>
+      )}
+      <strong>{data.heading}</strong>
+      {data.description && <p>{data.description}</p>}
+      <Handle type="source" position={Position.Right} className="node-handle" />
+      <Handle id="bottom-source" type="source" position={Position.Bottom} className="node-handle vertical-handle" />
+      <button className="add-control add-child nodrag" onClick={() => data.onAddChild?.(id)} aria-label="Add child">
+        <Plus size={16} />
+        <span>Add child</span>
+      </button>
+      <button className="add-control add-sibling nodrag" onClick={() => data.onAddBelow?.(id)} aria-label="Add node below">
+        <Plus size={15} />
+      </button>
+    </div>
+  );
+}
+
+const nodeTypes = { businessNode: BusinessNode };
+
+type EditorState = { id: string | null; parentId: string | null; heading: string; description: string; shape: MapNodeData["shape"]; color: MapNodeData["color"] };
+type MenuState = { id: string; x: number; y: number } | null;
+type BranchClipboard = { rootId: string; nodes: MapNode[] } | null;
+
+export function BusinessMap({ mapId, mapTitle }: { mapId: string; mapTitle: string }) {
+  return <ReactFlowProvider><BusinessMapCanvas mapId={mapId} mapTitle={mapTitle} /></ReactFlowProvider>;
+}
+
+function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: string }) {
+  const [nodes, setNodes] = useState<MapNode[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editor, setEditor] = useState<EditorState | null>(null);
+  const [menu, setMenu] = useState<MenuState>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
+  const [branchClipboard, setBranchClipboard] = useState<BranchClipboard>(null);
+  const [selectedCount, setSelectedCount] = useState(0);
+  const past = useRef<MapNode[][]>([]);
+  const future = useRef<MapNode[][]>([]);
+  const flowInstance = useRef<ReactFlowInstance<MapNode, Edge> | null>(null);
+  const pendingViewport = useRef<Viewport | null>(null);
+  const isMarqueeSelecting = useRef(false);
+  const mapStorageKey = `${STORAGE_KEY}:${mapId}`;
+  const mapViewportKey = `${VIEWPORT_KEY}:${mapId}`;
+
+  const hydrateActions = (items: MapNode[]) => items.map((node) => ({
+    ...node,
+    data: {
+      ...node.data,
+      childCount: items.filter((candidate) => candidate.data.parentId === node.id).length,
+      onAddChild: addChild,
+      onAddBelow: addBelow,
+      onToggle: toggleCollapsed,
+    },
+  }));
+
+  const commit = (updater: (current: MapNode[]) => MapNode[], relayout = true) => {
+    setNodes((current) => {
+      past.current.push(current.map(stripActions));
+      if (past.current.length > 60) past.current.shift();
+      future.current = [];
+      setHistoryState({ canUndo: true, canRedo: false });
+      const updated = updater(current).map(stripActions);
+      return hydrateActions(relayout ? layoutTree(updated) : updated);
+    });
+  };
+
+  function addChild(parentId: string) {
+    const siblings = nodes.filter((node) => node.data.parentId === parentId);
+    setEditor({ id: null, parentId, heading: "", description: "", shape: "box", color: "default" });
+    setMenu(null);
+    setSelectedId(parentId);
+    pendingSort.current = siblings.length;
+    pendingPlacement.current = "right";
+  }
+
+  const pendingSort = useRef(0);
+  const pendingPlacement = useRef<MapNodeData["placement"]>("right");
+
+  function addBelow(id: string) {
+    const node = nodes.find((item) => item.id === id);
+    if (!node) return;
+    pendingSort.current = nodes.filter((item) => item.data.parentId === id && item.data.placement === "below").length;
+    pendingPlacement.current = "below";
+    setEditor({ id: null, parentId: id, heading: "", description: "", shape: "box", color: "default" });
+    setMenu(null);
+  }
+
+  function toggleCollapsed(id: string) {
+    commit((current) => current.map((node) => node.id === id
+      ? { ...node, data: { ...node.data, collapsed: !node.data.collapsed } }
+      : node));
+  }
+
+  function stripActions(node: MapNode): MapNode {
+    const data = { ...node.data };
+    delete data.onAddChild;
+    delete data.onAddBelow;
+    delete data.onToggle;
+    delete data.childCount;
+    return { ...node, selected: false, data };
+  }
+
+  const queueSave = useEffectEvent((current: MapNode[]) => {
+    localStorage.setItem(mapStorageKey, JSON.stringify(current.map(stripActions)));
+  });
+
+  const loadMap = useEffectEvent(() => {
+    const legacyDraft = mapId === DEFAULT_MAP_ID ? localStorage.getItem(STORAGE_KEY) : null;
+    const cached = localStorage.getItem(mapStorageKey) ?? legacyDraft;
+
+    let initial: MapNode[];
+    let hasSavedPositions = false;
+    if (cached !== null) {
+      try {
+        const parsed = JSON.parse(cached) as unknown;
+        if (!Array.isArray(parsed)) throw new Error("Invalid map data");
+        initial = parsed.filter((item): item is MapNode => Boolean(
+          item && typeof item === "object" && "id" in item && "data" in item && "position" in item,
+        ));
+      } catch {
+        localStorage.removeItem(mapStorageKey);
+        initial = mapId === DEFAULT_MAP_ID
+          ? seedNodes.map((node) => node.id === "company" ? { ...node, data: { ...node.data, heading: mapTitle } } : node)
+          : [makeNode(`root-${mapId}`, null, mapTitle, "Business operating model", 0)];
+      }
+      hasSavedPositions = true;
+    } else {
+      initial = mapId === DEFAULT_MAP_ID
+        ? seedNodes.map((node) => node.id === "company" ? { ...node, data: { ...node.data, heading: mapTitle } } : node)
+        : [makeNode(`root-${mapId}`, null, mapTitle, "Business operating model", 0)];
+    }
+    const positioned = hasSavedPositions ? initial.map(stripActions) : layoutTree(initial.map(stripActions));
+    setNodes(hydrateActions(positioned));
+    setLoaded(true);
+
+    const legacyViewport = localStorage.getItem(mapViewportKey)
+      ?? (mapId === DEFAULT_MAP_ID ? localStorage.getItem(VIEWPORT_KEY) : null);
+    pendingViewport.current = legacyViewport
+      ? JSON.parse(legacyViewport) as Viewport
+      : null;
+    window.setTimeout(() => {
+      if (!flowInstance.current) return;
+      if (pendingViewport.current) void flowInstance.current.setViewport(pendingViewport.current);
+      else void flowInstance.current.fitView({ padding: 0.25 });
+    }, 0);
+  });
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadMap(), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    const timer = window.setTimeout(() => queueSave(nodes), 150);
+    return () => window.clearTimeout(timer);
+  }, [nodes, loaded]);
+
+  const edges: Edge[] = nodes
+    .filter((node) => node.data.parentId && !node.hidden)
+    .map((node) => ({
+      id: `edge-${node.data.parentId}-${node.id}`,
+      source: node.data.parentId!,
+      target: node.id,
+      sourceHandle: node.data.placement === "below" ? "bottom-source" : undefined,
+      targetHandle: node.data.placement === "below" ? "top-target" : undefined,
+      type: "smoothstep",
+      style: { stroke: node.data.aiSolution ? "#0f766e" : "#a9a8a2", strokeWidth: 1.6 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: node.data.aiSolution ? "#0f766e" : "#a9a8a2", width: 14, height: 14 },
+    }));
+
+  const onNodesChange = (changes: NodeChange<MapNode>[]) => {
+    const selectedInBatch = changes.filter((change) => change.type === "select" && change.selected).length;
+    const applicableChanges = isMarqueeSelecting.current || selectedInBatch > 1
+      ? changes
+      : changes.filter((change) => change.type !== "select");
+    setNodes((current) => hydrateActions(applyNodeChanges(applicableChanges, current)));
+  };
+
+  const deleteNode = (id: string) => {
+    const descendants = descendantsOf(nodes, id);
+    commit((current) => current.filter((node) => node.id !== id && !descendants.has(node.id)));
+    setSelectedId(null);
+    setMenu(null);
+  };
+
+  const addRoot = () => {
+    pendingSort.current = nodes.filter((node) => node.data.parentId === null).length;
+    pendingPlacement.current = "right";
+    setEditor({ id: null, parentId: null, heading: "", description: "", shape: "box", color: "default" });
+  };
+
+  const restoreStarterMap = () => {
+    const restored = seedNodes.map((node) => node.id === "company"
+      ? { ...node, data: { ...node.data, heading: mapTitle } }
+      : node);
+    commit(() => restored);
+  };
+
+  const duplicateNode = (id: string) => {
+    const source = nodes.find((node) => node.id === id);
+    if (!source) return;
+    const idCopy = crypto.randomUUID();
+    const sortOrder = nodes.filter((node) => node.data.parentId === source.data.parentId).length;
+    const copy = makeNode(idCopy, source.data.parentId, `${source.data.heading} copy`, source.data.description, sortOrder, {
+      aiSolution: source.data.aiSolution,
+      repeatedWork: source.data.repeatedWork,
+      shape: source.data.shape,
+      color: source.data.color,
+      placement: source.data.placement,
+    });
+    copy.data = { ...source.data, heading: `${source.data.heading} copy`, sortOrder };
+    commit((current) => [...current, copy]);
+    setSelectedId(idCopy);
+    setMenu(null);
+  };
+
+  const copyBranch = (id: string) => {
+    const branchIds = descendantsOf(nodes, id);
+    branchIds.add(id);
+    setBranchClipboard({
+      rootId: id,
+      nodes: nodes.filter((node) => branchIds.has(node.id)).map(stripActions),
+    });
+    setMenu(null);
+  };
+
+  const pasteBranch = (targetId: string) => {
+    if (!branchClipboard) return;
+    const idMap = new Map(branchClipboard.nodes.map((node) => [node.id, crypto.randomUUID()]));
+    const nextSortOrder = nodes.filter((node) => node.data.parentId === targetId).length;
+    const copies = branchClipboard.nodes.map((node) => {
+      const isRoot = node.id === branchClipboard.rootId;
+      return {
+        ...node,
+        id: idMap.get(node.id)!,
+        selected: false,
+        position: { x: 0, y: 0 },
+        data: {
+          ...node.data,
+          parentId: isRoot ? targetId : idMap.get(node.data.parentId!)!,
+          sortOrder: isRoot ? nextSortOrder : node.data.sortOrder,
+          placement: isRoot ? "right" : node.data.placement,
+          collapsed: false,
+        },
+      } satisfies MapNode;
+    });
+    commit((current) => [...current, ...copies]);
+    setSelectedId(idMap.get(branchClipboard.rootId)!);
+    setMenu(null);
+  };
+
+  const toggleAi = (id: string) => {
+    commit((current) => current.map((node) => node.id === id
+      ? { ...node, data: { ...node.data, aiSolution: !node.data.aiSolution } }
+      : node));
+    setMenu(null);
+  };
+
+  const toggleRepeatedWork = (id: string) => {
+    commit((current) => current.map((node) => node.id === id
+      ? { ...node, data: { ...node.data, repeatedWork: !node.data.repeatedWork } }
+      : node));
+    setMenu(null);
+  };
+
+  const editNode = (id: string) => {
+    const node = nodes.find((item) => item.id === id);
+    if (!node) return;
+    setEditor({ id, parentId: node.data.parentId, heading: node.data.heading, description: node.data.description, shape: node.data.shape ?? "box", color: node.data.color ?? "default" });
+    setMenu(null);
+  };
+
+  const saveEditor = () => {
+    if (!editor?.heading.trim()) return;
+    if (editor.id) {
+      commit((current) => current.map((node) => node.id === editor.id
+        ? { ...node, data: { ...node.data, heading: editor.heading.trim(), description: editor.description.trim(), shape: editor.shape, color: editor.color } }
+        : node), false);
+    } else {
+      const id = crypto.randomUUID();
+      const newNode = makeNode(id, editor.parentId, editor.heading.trim(), editor.description.trim(), pendingSort.current);
+      newNode.data.shape = editor.shape;
+      newNode.data.color = editor.color;
+      newNode.data.placement = pendingPlacement.current;
+      commit((current) => [...current, newNode]);
+      setSelectedId(id);
+    }
+    setEditor(null);
+  };
+
+  const undo = () => {
+    const previous = past.current.pop();
+    if (!previous) return;
+    setNodes((current) => {
+      future.current.push(current.map(stripActions));
+      setHistoryState({ canUndo: past.current.length > 0, canRedo: true });
+      return hydrateActions(previous);
+    });
+  };
+
+  const redo = () => {
+    const next = future.current.pop();
+    if (!next) return;
+    setNodes((current) => {
+      past.current.push(current.map(stripActions));
+      setHistoryState({ canUndo: true, canRedo: future.current.length > 0 });
+      return hydrateActions(next);
+    });
+  };
+
+  const handleKeyboard = useEffectEvent((event: KeyboardEvent) => {
+    const target = event.target as HTMLElement;
+    if (target.matches("input, textarea")) return;
+    const command = event.metaKey || event.ctrlKey;
+    if (command && event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redo();
+      else undo();
+    } else if (command && event.key.toLowerCase() === "c" && selectedId) {
+      event.preventDefault();
+      copyBranch(selectedId);
+    } else if (command && event.key.toLowerCase() === "v" && selectedId && branchClipboard) {
+      event.preventDefault();
+      pasteBranch(selectedId);
+    } else if (command && event.key.toLowerCase() === "d" && selectedId) {
+      event.preventDefault();
+      duplicateNode(selectedId);
+    } else if ((event.key === "Delete" || event.key === "Backspace") && selectedId) {
+      event.preventDefault();
+      deleteNode(selectedId);
+    }
+  });
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyboard);
+    return () => window.removeEventListener("keydown", handleKeyboard);
+  }, []);
+
+  const menuNode = menu ? nodes.find((node) => node.id === menu.id) : null;
+
+  return (
+    <main className="app-shell" onClick={() => setMenu(null)}>
+      <header className="topbar">
+        <div className="brand"><span className="brand-mark"><Sparkles size={18} /></span><span>deepmap.ai</span></div>
+        <div className="map-title"><Link href="/"><ArrowLeft size={14} />All businesses</Link><ChevronRight size={14} /><strong>{mapTitle}</strong></div>
+        <div className="top-actions">
+          <button onClick={(event) => { event.stopPropagation(); undo(); }} disabled={!historyState.canUndo} title="Undo"><Undo2 size={17} /></button>
+          <button onClick={(event) => { event.stopPropagation(); redo(); }} disabled={!historyState.canRedo} title="Redo"><Redo2 size={17} /></button>
+          {selectedCount > 1 && <span className="selection-count">{selectedCount} nodes selected</span>}
+        </div>
+      </header>
+
+      <section className="workspace">
+        <div className="canvas-wrap">
+          {!loaded && <div className="loading">Opening map...</div>}
+          {loaded && !nodes.length && (
+            <div className="empty-map">
+              <div className="empty-map-mark"><Sparkles size={22} /></div>
+              <strong>This map is empty</strong>
+              <span>Add a first node, or bring back the Digital Marketing Agency starter tree.</span>
+              <div>
+                <button onClick={addRoot}><Plus size={16} />Add first node</button>
+                {mapId === DEFAULT_MAP_ID && <button className="secondary" onClick={restoreStarterMap}><Redo2 size={16} />Restore starter map</button>}
+              </div>
+            </div>
+          )}
+          <ReactFlow<MapNode, Edge>
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onNodeClick={(event, node) => {
+              const additive = event.shiftKey || event.metaKey || event.ctrlKey;
+              const updated = nodes.map((item) => ({
+                ...item,
+                selected: item.id === node.id ? (additive ? !item.selected : true) : additive ? item.selected : false,
+              }));
+              const selectedNodes = updated.filter((item) => item.selected);
+              setNodes(hydrateActions(updated));
+              setSelectedCount(selectedNodes.length);
+              setSelectedId(selectedNodes.some((item) => item.id === node.id) ? node.id : selectedNodes.at(-1)?.id ?? null);
+            }}
+            onPaneClick={() => {
+              setNodes(hydrateActions(nodes.map((node) => ({ ...node, selected: false }))));
+              setSelectedCount(0);
+              setSelectedId(null);
+            }}
+            onSelectionStart={() => { isMarqueeSelecting.current = true; }}
+            onSelectionEnd={() => { isMarqueeSelecting.current = false; }}
+            onSelectionChange={({ nodes: selectedNodes }) => {
+              setSelectedCount(selectedNodes.length);
+              setSelectedId(selectedNodes.at(-1)?.id ?? null);
+            }}
+            onNodeDoubleClick={(_, node) => editNode(node.id)}
+            onNodeContextMenu={(event, node) => {
+              event.preventDefault();
+              setNodes(hydrateActions(nodes.map((item) => ({ ...item, selected: item.id === node.id }))));
+              setSelectedCount(1);
+              setSelectedId(node.id);
+              setMenu({ id: node.id, x: event.clientX, y: event.clientY });
+            }}
+            onInit={(instance) => {
+              flowInstance.current = instance;
+              if (pendingViewport.current) void instance.setViewport(pendingViewport.current);
+            }}
+            onMoveEnd={(_, viewport) => {
+              localStorage.setItem(mapViewportKey, JSON.stringify(viewport));
+            }}
+            minZoom={0.18}
+            maxZoom={1.8}
+            deleteKeyCode={null}
+            selectionOnDrag={false}
+            selectionMode={SelectionMode.Partial}
+            selectionKeyCode="Shift"
+            multiSelectionKeyCode={["Shift", "Meta", "Control"]}
+            panOnDrag
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} color="#d7d4cb" />
+            <Controls showInteractive={false} />
+            <MiniMap pannable zoomable nodeColor={(node) => node.data.aiSolution ? "#0f766e" : "#d7d3c8"} maskColor="rgba(247, 246, 241, .78)" />
+          </ReactFlow>
+        </div>
+      </section>
+
+      {menu && menuNode && (
+        <div className="context-menu" style={{ left: menu.x, top: menu.y }} onClick={(event) => event.stopPropagation()}>
+          <button onClick={() => editNode(menu.id)}><Edit3 size={15} />Edit</button>
+          <button onClick={() => addChild(menu.id)}><Plus size={15} />Add child</button>
+          <button onClick={() => addBelow(menu.id)}><Plus size={15} />Add node below</button>
+          <button onClick={() => copyBranch(menu.id)}><ClipboardCopy size={15} />Copy branch</button>
+          <button onClick={() => pasteBranch(menu.id)} disabled={!branchClipboard}><ClipboardPaste size={15} />Paste as child</button>
+          <button onClick={() => duplicateNode(menu.id)}><Copy size={15} />Duplicate</button>
+          <button onClick={() => toggleAi(menu.id)}><Bot size={15} />{menuNode.data.aiSolution ? "Remove AI solution" : "Mark as AI solution"}</button>
+          <button onClick={() => toggleRepeatedWork(menu.id)}><Redo2 size={15} />{menuNode.data.repeatedWork ? "Remove repeated work" : "Mark as most repeated work"}</button>
+          <div />
+          <button className="danger" onClick={() => deleteNode(menu.id)}><Trash2 size={15} />Delete branch</button>
+        </div>
+      )}
+
+      {editor && (
+        <div className="modal-backdrop" onMouseDown={() => setEditor(null)}>
+          <form className="node-editor" onSubmit={(event) => { event.preventDefault(); saveEditor(); }} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="editor-head"><div><span>{editor.id ? "Edit node" : "New node"}</span><h2>{editor.id ? "Refine this step" : "Add to the operating map"}</h2></div><button type="button" onClick={() => setEditor(null)}><X size={18} /></button></div>
+            <label>Heading<input autoFocus value={editor.heading} onChange={(event) => setEditor({ ...editor, heading: event.target.value })} placeholder="e.g. Lead qualification" maxLength={90} /></label>
+            <label>Description <span>Optional</span><textarea value={editor.description} onChange={(event) => setEditor({ ...editor, description: event.target.value })} placeholder="What happens at this step?" rows={4} maxLength={320} /></label>
+            <fieldset className="shape-picker">
+              <legend>Shape</legend>
+              <div className="shape-options">
+                {(["box", "diamond", "rounded"] as const).map((shape) => (
+                  <button type="button" key={shape} aria-pressed={editor.shape === shape} onClick={() => setEditor({ ...editor, shape })}>
+                    <i className={`shape-preview preview-${shape}`} />
+                    <span>{shape === "box" ? "Box" : shape === "diamond" ? "Diamond" : "Rounded"}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="color-picker-head"><span>Node color</span>{editor.color !== "default" && <button type="button" onClick={() => setEditor({ ...editor, color: "default" })}>Clear color</button>}</div>
+              <div className="color-picker">
+                {(["blue", "yellow", "rose", "lavender", "slate"] as const).map((color) => (
+                  <button type="button" key={color} aria-label={`${color[0].toUpperCase()}${color.slice(1)} node color`} aria-pressed={editor.color === color} onClick={() => setEditor({ ...editor, color })}>
+                    <i className={`color-swatch swatch-${color}`} />
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            <div className="editor-actions"><button type="button" onClick={() => setEditor(null)}>Cancel</button><button type="submit" disabled={!editor.heading.trim()}>{editor.id ? "Save changes" : "Add node"}</button></div>
+          </form>
+        </div>
+      )}
+    </main>
+  );
+}

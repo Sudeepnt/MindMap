@@ -17,6 +17,9 @@ create table if not exists public.business_map_nodes (
   collapsed boolean not null default false,
   ai_solution boolean not null default false,
   repeated_work boolean not null default false,
+  node_shape text not null default 'box' check (node_shape in ('box', 'diamond', 'rounded')),
+  node_color text not null default 'default' check (node_color in ('default', 'blue', 'yellow', 'rose', 'lavender', 'slate')),
+  placement text not null default 'right' check (placement in ('right', 'below')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

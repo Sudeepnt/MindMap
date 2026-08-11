@@ -8,8 +8,11 @@ export type MapNodeData = {
   collapsed: boolean;
   aiSolution: boolean;
   repeatedWork: boolean;
+  shape: "box" | "diamond" | "rounded";
+  color: "default" | "blue" | "yellow" | "rose" | "lavender" | "slate";
+  placement: "right" | "below";
   onAddChild?: (id: string) => void;
-  onAddSibling?: (id: string) => void;
+  onAddBelow?: (id: string) => void;
   onToggle?: (id: string) => void;
   childCount?: number;
 };
@@ -28,4 +31,7 @@ export type StoredNode = {
   collapsed: boolean;
   ai_solution: boolean;
   repeated_work: boolean;
+  node_shape: "box" | "diamond" | "rounded";
+  node_color: "default" | "blue" | "yellow" | "rose" | "lavender" | "slate";
+  placement: "right" | "below";
 };

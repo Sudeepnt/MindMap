@@ -732,18 +732,24 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     ));
   };
 
-  const deleteNode = (id: string) => {
-    const descendants = descendantsOf(nodes, id);
-    const deletedIds = new Set(descendants);
-    deletedIds.add(id);
-    commit((current) => current.filter((node) => node.id !== id && !descendants.has(node.id)));
+  const deleteNodes = (ids: Iterable<string>) => {
+    const deletedIds = new Set<string>();
+    for (const id of ids) {
+      deletedIds.add(id);
+      descendantsOf(nodes, id).forEach((descendantId) => deletedIds.add(descendantId));
+    }
+    if (!deletedIds.size) return;
+    commit((current) => current.filter((node) => !deletedIds.has(node.id)));
     setConnections((current) => current.filter((connection) => (
       !deletedIds.has(connection.source) && !deletedIds.has(connection.target)
     )));
     setSelectedId(null);
+    setSelectedCount(0);
     setSelectedConnectionId(null);
     setMenu(null);
   };
+
+  const deleteNode = (id: string) => deleteNodes([id]);
 
   const addRoot = () => {
     pendingSort.current = nodes.filter((node) => node.data.parentId === null).length;
@@ -901,7 +907,9 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       setSelectedConnectionId(null);
     } else if ((event.key === "Delete" || event.key === "Backspace") && selectedId) {
       event.preventDefault();
-      deleteNode(selectedId);
+      const selectedNodeIds = new Set(nodes.filter((node) => node.selected).map((node) => node.id));
+      selectedNodeIds.add(selectedId);
+      deleteNodes(selectedNodeIds);
     }
   });
 

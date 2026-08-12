@@ -666,10 +666,14 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     const selected = connection.id === selectedConnectionId;
     return {
       ...connection,
-      type: "straight",
+      type: "smoothstep",
       className: "relation-edge",
       selected,
       zIndex: 2,
+      pathOptions: {
+        borderRadius: 16,
+        offset: 24,
+      },
       style: {
         stroke: "#17845f",
         strokeWidth: selected ? 3 : 2,

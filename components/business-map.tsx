@@ -38,7 +38,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { createClient } from "@/lib/supabase";
 import type { MapNode, MapNodeData, StoredConnection as StoredConnectionRow, StoredNode } from "@/lib/types";
 
@@ -49,6 +49,15 @@ const CONNECTIONS_KEY = "opscanvas-connections-v1";
 const CLOUD_MIGRATION_KEY = "opscanvas-cloud-migrated-v1";
 const X_GAP = 330;
 const Y_GAP = 150;
+
+const subscribeToPhoneViewport = (notify: () => void) => {
+  const query = window.matchMedia("(max-width: 760px)");
+  query.addEventListener("change", notify);
+  return () => query.removeEventListener("change", notify);
+};
+
+const getPhoneViewport = () => window.matchMedia("(max-width: 760px)").matches;
+const getServerPhoneViewport = () => false;
 
 type SeedOptions = {
   aiSolution?: boolean;
@@ -333,6 +342,9 @@ export function BusinessMap({ mapId, mapTitle }: { mapId: string; mapTitle: stri
 }
 
 function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: string }) {
+  const phoneViewport = useSyncExternalStore(subscribeToPhoneViewport, getPhoneViewport, getServerPhoneViewport);
+  const [interactionModeOverride, setInteractionMode] = useState<"view" | "edit" | null>(null);
+  const interactionMode = interactionModeOverride ?? (phoneViewport ? "view" : "edit");
   const [nodes, setNodes] = useState<MapNode[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -355,6 +367,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const marqueeSelecting = useRef(false);
   const mapStorageKey = `${STORAGE_KEY}:${mapId}`;
   const mapViewportKey = `${VIEWPORT_KEY}:${mapId}`;
+  const mobileMapViewportKey = `${VIEWPORT_KEY}:mobile-v2:${mapId}`;
   const mapConnectionsKey = `${CONNECTIONS_KEY}:${mapId}`;
   const mapCloudMigrationKey = `${CLOUD_MIGRATION_KEY}:${mapId}`;
   const cloudSaveQueue = useRef<{ nodes: MapNode[]; connections: StoredMapConnection[] } | null>(null);
@@ -366,6 +379,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const viewportSaveTimer = useRef<number | null>(null);
 
   function selectNode(event: MouseEvent | React.MouseEvent, id: string) {
+    if (interactionMode === "view") return;
     const additive = additiveSelectionPressed.current || event.shiftKey || event.metaKey || event.ctrlKey;
     const nextSelection = new Set(selectedNodeIds.current);
     if (additive) {
@@ -607,11 +621,15 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     window.setTimeout(() => {
       if (!flowInstance.current) return;
       if (viewport) void flowInstance.current.setViewport(viewport);
-      else void flowInstance.current.fitView({ padding: 0.25 });
+      else if (window.matchMedia("(max-width: 760px)").matches) {
+        const root = preparedNodes.find((node) => node.data.parentId === null) ?? preparedNodes[0];
+        if (root) void flowInstance.current.setCenter(root.position.x + 115, root.position.y + 43, { zoom: 0.72 });
+      } else void flowInstance.current.fitView({ padding: 0.25 });
     }, 0);
   };
 
   const loadMap = useEffectEvent(async () => {
+    const mobileViewport = window.matchMedia("(max-width: 760px)").matches;
     const localNodes = parseLocalNodes();
     const fallbackNodes = localNodes
       ? migrateManualPositions(localNodes.map(stripActions))
@@ -620,8 +638,8 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
         : [makeNode(`root-${mapId}`, null, mapTitle, "Business operating model", 0)]).map(stripActions));
     const localConnections = parseLocalConnections(new Set(fallbackNodes.map((node) => node.id)));
 
-    const legacyViewport = localStorage.getItem(mapViewportKey)
-      ?? (mapId === DEFAULT_MAP_ID ? localStorage.getItem(VIEWPORT_KEY) : null);
+    const legacyViewport = localStorage.getItem(mobileViewport ? mobileMapViewportKey : mapViewportKey)
+      ?? (!mobileViewport && mapId === DEFAULT_MAP_ID ? localStorage.getItem(VIEWPORT_KEY) : null);
     const localViewport = legacyViewport ? JSON.parse(legacyViewport) as Viewport : null;
     const supabase = createClient();
     const [{ data: cloudNodes, error: nodeError }, { data: cloudConnections, error: connectionError }, { data: cloudMap, error: mapError }] = await Promise.all([
@@ -645,7 +663,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
 
     const nextNodes = (cloudNodes as StoredNode[]).map(fromStoredNode);
     const nextConnections = (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection);
-    const cloudViewport = cloudMap.viewport_zoom == null
+    const cloudViewport = mobileViewport || cloudMap.viewport_zoom == null
       ? localViewport
       : { x: cloudMap.viewport_x ?? 0, y: cloudMap.viewport_y ?? 0, zoom: cloudMap.viewport_zoom };
     applyLoadedState(nextNodes, nextConnections, cloudViewport);
@@ -968,6 +986,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const handleKeyboard = useEffectEvent((event: KeyboardEvent) => {
     const target = event.target as HTMLElement;
     if (target.matches("input, textarea, select")) return;
+    if (interactionMode === "view") return;
     const command = event.metaKey || event.ctrlKey;
     if (command && event.key.toLowerCase() === "z") {
       event.preventDefault();
@@ -1012,10 +1031,33 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const menuNode = menu ? nodes.find((node) => node.id === menu.id) : null;
 
   return (
-    <main className="app-shell" onClick={() => setMenu(null)}>
+    <main className={`app-shell mode-${interactionMode}`} onClick={() => setMenu(null)}>
       <header className="topbar">
         <div className="brand"><span className="brand-mark"><Sparkles size={18} /></span><span>deepmap.ai</span></div>
+        <Link className="mobile-map-back" href="/" aria-label="Back to all businesses"><ArrowLeft size={18} /></Link>
+        <strong className="mobile-map-title">{mapTitle}</strong>
         <div className="map-title"><Link href="/"><ArrowLeft size={14} />All businesses</Link><ChevronRight size={14} /><strong>{mapTitle}</strong></div>
+        <label className="mobile-mode-select">
+          <span>Map mode</span>
+          <select value={interactionMode} onChange={(event) => {
+            const mode = event.target.value as "view" | "edit";
+            setInteractionMode(mode);
+            if (mode === "view") {
+              selectedNodeIds.current.clear();
+              setSelectedCount(0);
+              setSelectedId(null);
+              setMenu(null);
+              setNodes((current) => current.map((node) => ({
+                ...node,
+                selected: false,
+                data: { ...node.data, uiSelected: false },
+              })));
+            }
+          }}>
+            <option value="view">View</option>
+            <option value="edit">Edit</option>
+          </select>
+        </label>
         <div className="top-actions">
           <button
             className={`connections-toggle ${connectionsVisible ? "is-on" : ""}`}
@@ -1055,6 +1097,9 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
             nodes={displayNodes}
             edges={edges}
             nodeTypes={nodeTypes}
+            nodesDraggable={interactionMode === "edit"}
+            nodesConnectable={interactionMode === "edit"}
+            elementsSelectable={interactionMode === "edit"}
             onNodesChange={onNodesChange}
             onSelectionStart={() => {
               marqueeSelecting.current = true;
@@ -1100,8 +1145,11 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
               setSelectedId(null);
               setSelectedConnectionId(null);
             }}
-            onNodeDoubleClick={(_, node) => editNode(node.id)}
+            onNodeDoubleClick={(_, node) => {
+              if (interactionMode === "edit") editNode(node.id);
+            }}
             onNodeContextMenu={(event, node) => {
+              if (interactionMode === "view") return;
               event.preventDefault();
               selectedNodeIds.current = new Set([node.id]);
               setNodes(hydrateActions(nodes.map((item) => ({
@@ -1118,7 +1166,9 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
               if (pendingViewport.current) void instance.setViewport(pendingViewport.current);
             }}
             onMoveEnd={(_, viewport) => {
-              localStorage.setItem(mapViewportKey, JSON.stringify(viewport));
+              const mobileViewport = window.matchMedia("(max-width: 760px)").matches;
+              localStorage.setItem(mobileViewport ? mobileMapViewportKey : mapViewportKey, JSON.stringify(viewport));
+              if (mobileViewport) return;
               if (viewportSaveTimer.current) window.clearTimeout(viewportSaveTimer.current);
               viewportSaveTimer.current = window.setTimeout(() => {
                 void createClient().from("business_maps").update({

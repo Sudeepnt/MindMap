@@ -172,6 +172,13 @@ function descendantsOf(nodes: MapNode[], id: string): Set<string> {
   return result;
 }
 
+function nodeSizeClass(data: MapNodeData): "" | "is-wide" | "is-extra-wide" {
+  const headingLength = data.heading.trim().length;
+  if (headingLength > 36) return "is-extra-wide";
+  if (headingLength > 18) return "is-wide";
+  return "";
+}
+
 function layoutTree(nodes: MapNode[]): MapNode[] {
   if (!nodes.length) return nodes;
   const byParent = new Map<string | null, MapNode[]>();
@@ -187,7 +194,11 @@ function layoutTree(nodes: MapNode[]): MapNode[] {
   const positions = new Map<string, { x: number; y: number }>();
   const hidden = new Set<string>();
 
-  const estimatedHeight = (node: MapNode) => node.data.shape === "diamond" ? 190 : node.data.description ? 96 : 54;
+  const estimatedHeight = (node: MapNode) => {
+    if (node.data.shape !== "diamond") return node.data.description ? 96 : 54;
+    const sizeClass = nodeSizeClass(node.data);
+    return sizeClass === "is-extra-wide" ? 250 : sizeClass === "is-wide" ? 220 : 190;
+  };
   const verticalSpan = (node: MapNode): number => {
     const belowChildren = nodes
       .filter((child) => child.data.parentId === node.id && child.data.placement === "below")
@@ -273,8 +284,9 @@ function migrateManualPositions(nodes: MapNode[]): MapNode[] {
 }
 
 function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
+  const sizeClass = nodeSizeClass(data);
   return (
-    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${!data.description ? "is-compact" : ""} ${selected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""}`}>
+    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""}`}>
       <Handle type="target" position={Position.Left} className="node-handle" isConnectable={false} />
       <Handle id="top-target" type="target" position={Position.Top} className="node-handle vertical-handle" isConnectable={false} />
       <button

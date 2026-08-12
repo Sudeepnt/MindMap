@@ -366,13 +366,20 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
 
   function selectNode(event: MouseEvent | React.MouseEvent, id: string) {
     const additive = additiveSelectionPressed.current || event.shiftKey || event.metaKey || event.ctrlKey;
+    const nextSelection = new Set(selectedNodeIds.current);
+    if (additive) {
+      if (nextSelection.has(id)) nextSelection.delete(id);
+      else nextSelection.add(id);
+    } else if (!nextSelection.has(id) || nextSelection.size <= 1) {
+      nextSelection.clear();
+      nextSelection.add(id);
+    }
     const updated = nodes.map((item) => ({
       ...item,
+      selected: nextSelection.has(item.id),
       data: {
         ...item.data,
-        uiSelected: item.id === id
-          ? additive ? !selectedNodeIds.current.has(item.id) : true
-          : additive ? selectedNodeIds.current.has(item.id) : false,
+        uiSelected: nextSelection.has(item.id),
       },
     }));
     const selectedNodes = updated.filter((item) => item.data.uiSelected);
@@ -670,6 +677,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     lastPersistedSnapshot.current = snapshot;
     setNodes(hydrateActions(preparedNodes.map((node) => ({
       ...node,
+      selected: selectedNodeIds.current.has(node.id),
       data: { ...node.data, uiSelected: selectedNodeIds.current.has(node.id) },
     }))));
     setConnections(nextConnections);
@@ -1048,6 +1056,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
               selectedNodeIds.current.clear();
               setNodes(hydrateActions(nodes.map((node) => ({
                 ...node,
+                selected: false,
                 data: { ...node.data, uiSelected: false },
               }))));
             }}
@@ -1057,6 +1066,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
               selectedNodeIds.current.clear();
               setNodes(hydrateActions(nodes.map((node) => ({
                 ...node,
+                selected: false,
                 data: { ...node.data, uiSelected: false },
               }))));
               setSelectedCount(0);
@@ -1069,6 +1079,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
               selectedNodeIds.current = new Set([node.id]);
               setNodes(hydrateActions(nodes.map((item) => ({
                 ...item,
+                selected: item.id === node.id,
                 data: { ...item.data, uiSelected: item.id === node.id },
               }))));
               setSelectedCount(1);

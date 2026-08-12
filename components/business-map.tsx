@@ -352,6 +352,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const selectedNodeIds = useRef<Set<string>>(new Set());
   const additiveSelectionPressed = useRef(false);
   const nodeGestureActive = useRef(false);
+  const marqueeSelecting = useRef(false);
   const mapStorageKey = `${STORAGE_KEY}:${mapId}`;
   const mapViewportKey = `${VIEWPORT_KEY}:${mapId}`;
   const mapConnectionsKey = `${CONNECTIONS_KEY}:${mapId}`;
@@ -781,15 +782,33 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   };
 
   const onNodesChange = (changes: NodeChange<MapNode>[]) => {
+    const isMarqueeSelection = marqueeSelecting.current;
     const movedNodeIds = new Set<string>();
-    const nonSelectionChanges = changes.filter((change) => change.type !== "select");
-    nonSelectionChanges.forEach((change) => {
+    const acceptedChanges = changes.filter((change) => change.type !== "select" || isMarqueeSelection);
+    acceptedChanges.forEach((change) => {
       if (change.type === "position" && change.position) movedNodeIds.add(change.id);
     });
+    if (isMarqueeSelection) {
+      acceptedChanges.forEach((change) => {
+        if (change.type !== "select") return;
+        if (change.selected) selectedNodeIds.current.add(change.id);
+        else selectedNodeIds.current.delete(change.id);
+      });
+      setSelectedCount(selectedNodeIds.current.size);
+      setSelectedId((current) => current && selectedNodeIds.current.has(current)
+        ? current
+        : [...selectedNodeIds.current].at(-1) ?? null);
+      setSelectedConnectionId(null);
+    }
     setNodes((current) => hydrateActions(
-      applyNodeChanges(nonSelectionChanges, current).map((node) => movedNodeIds.has(node.id)
-        ? { ...node, data: { ...node.data, positionLocked: true } }
-        : node),
+      applyNodeChanges(acceptedChanges, current).map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          ...(movedNodeIds.has(node.id) ? { positionLocked: true } : {}),
+          ...(isMarqueeSelection ? { uiSelected: selectedNodeIds.current.has(node.id) } : {}),
+        },
+      })),
     ));
   };
 
@@ -1037,6 +1056,14 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
             edges={edges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
+            onSelectionStart={() => {
+              marqueeSelecting.current = true;
+              nodeGestureActive.current = true;
+            }}
+            onSelectionEnd={() => {
+              marqueeSelecting.current = false;
+              window.setTimeout(() => { nodeGestureActive.current = false; }, 0);
+            }}
             onConnect={connectNodes}
             onConnectStart={(_, params) => setConnectingSourceId(params.nodeId)}
             onConnectEnd={() => setConnectingSourceId(null)}

@@ -39,12 +39,14 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import type { MapNode, MapNodeData } from "@/lib/types";
+import { createClient } from "@/lib/supabase";
+import type { MapNode, MapNodeData, StoredConnection as StoredConnectionRow, StoredNode } from "@/lib/types";
 
 const DEFAULT_MAP_ID = "00000000-0000-4000-8000-000000000001";
 const STORAGE_KEY = "opscanvas-draft-v2";
 const VIEWPORT_KEY = "opscanvas-viewport-v2";
 const CONNECTIONS_KEY = "opscanvas-connections-v1";
+const CLOUD_MIGRATION_KEY = "opscanvas-cloud-migrated-v1";
 const X_GAP = 330;
 const Y_GAP = 150;
 
@@ -124,6 +126,37 @@ function makeNode(
       color: options.color ?? "default",
       placement: options.placement ?? "right",
     },
+  };
+}
+
+function fromStoredNode(item: StoredNode): MapNode {
+  return {
+    id: item.id,
+    type: "businessNode",
+    position: { x: item.position_x, y: item.position_y },
+    data: {
+      heading: item.heading,
+      description: item.description ?? "",
+      parentId: item.parent_id,
+      sortOrder: item.sort_order,
+      collapsed: item.collapsed,
+      aiSolution: item.ai_solution,
+      repeatedWork: item.repeated_work ?? false,
+      shape: item.node_shape ?? "box",
+      color: item.node_color ?? "default",
+      placement: item.placement ?? "right",
+      positionLocked: item.position_locked ?? false,
+    },
+  };
+}
+
+function fromStoredConnection(item: StoredConnectionRow): StoredMapConnection {
+  return {
+    id: item.id,
+    source: item.source_id,
+    target: item.target_id,
+    sourceHandle: item.source_handle,
+    targetHandle: item.target_handle,
   };
 }
 
@@ -212,17 +245,38 @@ function layoutTree(nodes: MapNode[]): MapNode[] {
   return nodes.map((node) => ({
     ...node,
     hidden: hidden.has(node.id),
-    position: positions.has(node.id)
-      ? { x: positions.get(node.id)!.x, y: positions.get(node.id)!.y - minY }
-      : node.position,
+    position: node.data.positionLocked
+      ? node.position
+      : positions.has(node.id)
+        ? { x: positions.get(node.id)!.x, y: positions.get(node.id)!.y - minY }
+        : node.position,
   }));
+}
+
+function migrateManualPositions(nodes: MapNode[]): MapNode[] {
+  const automatic = layoutTree(nodes.map((node) => ({
+    ...node,
+    data: { ...node.data, positionLocked: false },
+  })));
+  const automaticById = new Map(automatic.map((node) => [node.id, node.position]));
+
+  return nodes.map((node) => {
+    const expected = automaticById.get(node.id);
+    const moved = expected && (
+      Math.abs(node.position.x - expected.x) > 2
+      || Math.abs(node.position.y - expected.y) > 2
+    );
+    return moved || node.data.positionLocked
+      ? { ...node, data: { ...node.data, positionLocked: true } }
+      : node;
+  });
 }
 
 function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
   return (
     <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${!data.description ? "is-compact" : ""} ${selected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""}`}>
-      <Handle type="target" position={Position.Left} className="node-handle" />
-      <Handle id="top-target" type="target" position={Position.Top} className="node-handle vertical-handle" />
+      <Handle type="target" position={Position.Left} className="node-handle" isConnectable={false} />
+      <Handle id="top-target" type="target" position={Position.Top} className="node-handle vertical-handle" isConnectable={false} />
       <button
         className="node-collapse nodrag"
         onClick={() => data.onToggle?.(id)}
@@ -240,8 +294,8 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
       )}
       <strong>{data.heading}</strong>
       {data.description && <p>{data.description}</p>}
-      <Handle type="source" position={Position.Right} className="node-handle" />
-      <Handle id="bottom-source" type="source" position={Position.Bottom} className="node-handle vertical-handle" />
+      <Handle type="source" position={Position.Right} className="node-handle" isConnectable={false} />
+      <Handle id="bottom-source" type="source" position={Position.Bottom} className="node-handle vertical-handle" isConnectable={false} />
       <Handle id="relation-source" type="source" position={Position.Right} className="relation-handle relation-source" title="Drag to connect this node" />
       <Handle id="relation-target" type="target" position={Position.Left} className={`relation-handle relation-target ${data.connectionTargetVisible ? "is-visible" : ""}`} title="Drop to connect to this node" />
       <button className="add-control add-child nodrag" onClick={() => data.onAddChild?.(id)} aria-label="Add child">
@@ -260,7 +314,7 @@ const nodeTypes = { businessNode: BusinessNode };
 type EditorState = { id: string | null; parentId: string | null; heading: string; description: string; shape: MapNodeData["shape"]; color: MapNodeData["color"] };
 type MenuState = { id: string; x: number; y: number } | null;
 type BranchClipboard = { rootId: string; nodes: MapNode[] } | null;
-type StoredConnection = Pick<Edge, "id" | "source" | "target" | "sourceHandle" | "targetHandle">;
+type StoredMapConnection = Pick<Edge, "id" | "source" | "target" | "sourceHandle" | "targetHandle">;
 
 export function BusinessMap({ mapId, mapTitle }: { mapId: string; mapTitle: string }) {
   return <ReactFlowProvider><BusinessMapCanvas mapId={mapId} mapTitle={mapTitle} /></ReactFlowProvider>;
@@ -275,7 +329,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [branchClipboard, setBranchClipboard] = useState<BranchClipboard>(null);
   const [selectedCount, setSelectedCount] = useState(0);
-  const [connections, setConnections] = useState<StoredConnection[]>([]);
+  const [connections, setConnections] = useState<StoredMapConnection[]>([]);
   const [connectionsVisible, setConnectionsVisible] = useState(true);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [connectingSourceId, setConnectingSourceId] = useState<string | null>(null);
@@ -287,6 +341,13 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const mapStorageKey = `${STORAGE_KEY}:${mapId}`;
   const mapViewportKey = `${VIEWPORT_KEY}:${mapId}`;
   const mapConnectionsKey = `${CONNECTIONS_KEY}:${mapId}`;
+  const mapCloudMigrationKey = `${CLOUD_MIGRATION_KEY}:${mapId}`;
+  const cloudSaveQueue = useRef<{ nodes: MapNode[]; connections: StoredMapConnection[] } | null>(null);
+  const cloudSaveRunning = useRef(false);
+  const cloudSnapshotToSkip = useRef<string | null>(null);
+  const cloudRetryTimer = useRef<number | null>(null);
+  const realtimeRefreshTimer = useRef<number | null>(null);
+  const viewportSaveTimer = useRef<number | null>(null);
 
   const hydrateActions = (items: MapNode[]) => items.map((node) => ({
     ...node,
@@ -347,79 +408,177 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     return { ...node, selected: false, data };
   }
 
-  const queueSave = useEffectEvent((current: MapNode[]) => {
-    localStorage.setItem(mapStorageKey, JSON.stringify(current.map(stripActions)));
+  const nodeRows = (current: MapNode[]) => current.map(stripActions).map((node) => ({
+    id: node.id,
+    parent_id: node.data.parentId,
+    heading: node.data.heading,
+    description: node.data.description,
+    sort_order: node.data.sortOrder,
+    position_x: node.position.x,
+    position_y: node.position.y,
+    collapsed: node.data.collapsed,
+    ai_solution: node.data.aiSolution,
+    repeated_work: node.data.repeatedWork ?? false,
+    node_shape: node.data.shape ?? "box",
+    node_color: node.data.color ?? "default",
+    placement: node.data.placement ?? "right",
+    position_locked: node.data.positionLocked ?? false,
+  }));
+
+  const connectionRows = (current: StoredMapConnection[]) => current.map((connection) => ({
+    id: connection.id,
+    source_id: connection.source,
+    target_id: connection.target,
+    source_handle: connection.sourceHandle ?? null,
+    target_handle: connection.targetHandle ?? null,
+  }));
+
+  const saveCloudState = async (currentNodes: MapNode[], currentConnections: StoredMapConnection[]) => {
+    const { error } = await createClient().rpc("save_business_map_state", {
+      p_map_id: mapId,
+      p_title: mapTitle,
+      p_nodes: nodeRows(currentNodes),
+      p_connections: connectionRows(currentConnections),
+    });
+    return error;
+  };
+
+  const stateSnapshot = (currentNodes: MapNode[], currentConnections: StoredMapConnection[]) => JSON.stringify({
+    nodes: currentNodes.map(stripActions),
+    connections: currentConnections,
   });
 
-  const loadMap = useEffectEvent(() => {
+  const flushCloudSave = async () => {
+    if (cloudSaveRunning.current) return;
+    cloudSaveRunning.current = true;
+    while (cloudSaveQueue.current) {
+      const queued = cloudSaveQueue.current;
+      cloudSaveQueue.current = null;
+      const error = await saveCloudState(queued.nodes, queued.connections);
+      if (error) {
+        cloudSaveQueue.current = queued;
+        if (cloudRetryTimer.current) window.clearTimeout(cloudRetryTimer.current);
+        cloudRetryTimer.current = window.setTimeout(() => void flushCloudSave(), 1000);
+        break;
+      }
+      localStorage.setItem(mapCloudMigrationKey, "true");
+    }
+    cloudSaveRunning.current = false;
+  };
+
+  const queueSave = useEffectEvent((currentNodes: MapNode[], currentConnections: StoredMapConnection[]) => {
+    const cleanNodes = currentNodes.map(stripActions);
+    localStorage.setItem(mapStorageKey, JSON.stringify(cleanNodes));
+    localStorage.setItem(mapConnectionsKey, JSON.stringify(currentConnections));
+    const snapshot = stateSnapshot(cleanNodes, currentConnections);
+    if (cloudSnapshotToSkip.current === snapshot) {
+      cloudSnapshotToSkip.current = null;
+      return;
+    }
+    cloudSaveQueue.current = { nodes: cleanNodes, connections: currentConnections };
+    void flushCloudSave();
+  });
+
+  const parseLocalNodes = (): MapNode[] | null => {
     const legacyDraft = mapId === DEFAULT_MAP_ID ? localStorage.getItem(STORAGE_KEY) : null;
     const cached = localStorage.getItem(mapStorageKey) ?? legacyDraft;
-
-    let initial: MapNode[];
-    let hasSavedPositions = false;
-    if (cached !== null) {
-      try {
-        const parsed = JSON.parse(cached) as unknown;
-        if (!Array.isArray(parsed)) throw new Error("Invalid map data");
-        initial = parsed.filter((item): item is MapNode => Boolean(
-          item && typeof item === "object" && "id" in item && "data" in item && "position" in item,
-        ));
-      } catch {
-        localStorage.removeItem(mapStorageKey);
-        initial = mapId === DEFAULT_MAP_ID
-          ? seedNodes.map((node) => node.id === "company" ? { ...node, data: { ...node.data, heading: mapTitle } } : node)
-          : [makeNode(`root-${mapId}`, null, mapTitle, "Business operating model", 0)];
-      }
-      hasSavedPositions = true;
-    } else {
-      initial = mapId === DEFAULT_MAP_ID
-        ? seedNodes.map((node) => node.id === "company" ? { ...node, data: { ...node.data, heading: mapTitle } } : node)
-        : [makeNode(`root-${mapId}`, null, mapTitle, "Business operating model", 0)];
+    if (cached === null) return null;
+    try {
+      const parsed = JSON.parse(cached) as unknown;
+      if (!Array.isArray(parsed)) throw new Error("Invalid map data");
+      return parsed.filter((item): item is MapNode => Boolean(
+        item && typeof item === "object" && "id" in item && "data" in item && "position" in item,
+      ));
+    } catch {
+      localStorage.removeItem(mapStorageKey);
+      return null;
     }
-    const positioned = hasSavedPositions ? initial.map(stripActions) : layoutTree(initial.map(stripActions));
-    const nodeIds = new Set(positioned.map((node) => node.id));
+  };
+
+  const parseLocalConnections = (nodeIds: Set<string>): StoredMapConnection[] => {
     const cachedConnections = localStorage.getItem(mapConnectionsKey);
-    if (cachedConnections) {
-      try {
-        const parsed = JSON.parse(cachedConnections) as unknown;
-        if (!Array.isArray(parsed)) throw new Error("Invalid connection data");
-        setConnections(parsed
-          .filter((item): item is StoredConnection => Boolean(
-            item
-            && typeof item === "object"
-            && "id" in item
-            && "source" in item
-            && "target" in item
-            && typeof item.id === "string"
-            && typeof item.source === "string"
-            && typeof item.target === "string"
-            && item.source !== item.target
-            && nodeIds.has(item.source)
-            && nodeIds.has(item.target),
-          ))
-          .map((connection) => ({
-            ...connection,
-            sourceHandle: connection.sourceHandle === "relation" ? "relation-source" : connection.sourceHandle,
-            targetHandle: connection.targetHandle === "relation" ? "relation-target" : connection.targetHandle,
-          })));
-      } catch {
-        localStorage.removeItem(mapConnectionsKey);
-        setConnections([]);
-      }
-    } else setConnections([]);
-    setNodes(hydrateActions(positioned));
+    if (!cachedConnections) return [];
+    try {
+      const parsed = JSON.parse(cachedConnections) as unknown;
+      if (!Array.isArray(parsed)) throw new Error("Invalid connection data");
+      return parsed
+        .filter((item): item is StoredMapConnection => Boolean(
+          item
+          && typeof item === "object"
+          && "id" in item
+          && "source" in item
+          && "target" in item
+          && typeof item.id === "string"
+          && typeof item.source === "string"
+          && typeof item.target === "string"
+          && item.source !== item.target
+          && nodeIds.has(item.source)
+          && nodeIds.has(item.target),
+        ))
+        .map((connection) => ({
+          ...connection,
+          sourceHandle: connection.sourceHandle === "relation" ? "relation-source" : connection.sourceHandle,
+          targetHandle: connection.targetHandle === "relation" ? "relation-target" : connection.targetHandle,
+        }));
+    } catch {
+      localStorage.removeItem(mapConnectionsKey);
+      return [];
+    }
+  };
+
+  const applyLoadedState = (nextNodes: MapNode[], nextConnections: StoredMapConnection[], viewport: Viewport | null) => {
+    const preparedNodes = layoutTree(nextNodes);
+    cloudSnapshotToSkip.current = stateSnapshot(preparedNodes, nextConnections);
+    setNodes(hydrateActions(preparedNodes));
+    setConnections(nextConnections);
     setLoaded(true);
+    pendingViewport.current = viewport;
+    window.setTimeout(() => {
+      if (!flowInstance.current) return;
+      if (viewport) void flowInstance.current.setViewport(viewport);
+      else void flowInstance.current.fitView({ padding: 0.25 });
+    }, 0);
+  };
+
+  const loadMap = useEffectEvent(async () => {
+    const localNodes = parseLocalNodes();
+    const fallbackNodes = localNodes
+      ? migrateManualPositions(localNodes.map(stripActions))
+      : layoutTree((mapId === DEFAULT_MAP_ID
+        ? seedNodes.map((node) => node.id === "company" ? { ...node, data: { ...node.data, heading: mapTitle } } : node)
+        : [makeNode(`root-${mapId}`, null, mapTitle, "Business operating model", 0)]).map(stripActions));
+    const localConnections = parseLocalConnections(new Set(fallbackNodes.map((node) => node.id)));
 
     const legacyViewport = localStorage.getItem(mapViewportKey)
       ?? (mapId === DEFAULT_MAP_ID ? localStorage.getItem(VIEWPORT_KEY) : null);
-    pendingViewport.current = legacyViewport
-      ? JSON.parse(legacyViewport) as Viewport
-      : null;
-    window.setTimeout(() => {
-      if (!flowInstance.current) return;
-      if (pendingViewport.current) void flowInstance.current.setViewport(pendingViewport.current);
-      else void flowInstance.current.fitView({ padding: 0.25 });
-    }, 0);
+    const localViewport = legacyViewport ? JSON.parse(legacyViewport) as Viewport : null;
+    const supabase = createClient();
+    const [{ data: cloudNodes, error: nodeError }, { data: cloudConnections, error: connectionError }, { data: cloudMap, error: mapError }] = await Promise.all([
+      supabase.from("business_map_nodes").select("*").eq("map_id", mapId).order("sort_order"),
+      supabase.from("business_map_connections").select("*").eq("map_id", mapId),
+      supabase.from("business_maps").select("id,viewport_x,viewport_y,viewport_zoom").eq("id", mapId).maybeSingle(),
+    ]);
+
+    if (nodeError || connectionError || mapError) {
+      applyLoadedState(fallbackNodes, localConnections, localViewport);
+      return;
+    }
+
+    const needsLocalMigration = Boolean(localNodes) && localStorage.getItem(mapCloudMigrationKey) !== "true";
+    if (needsLocalMigration || !cloudMap) {
+      applyLoadedState(fallbackNodes, localConnections, localViewport);
+      const error = await saveCloudState(fallbackNodes, localConnections);
+      if (!error) localStorage.setItem(mapCloudMigrationKey, "true");
+      return;
+    }
+
+    const nextNodes = (cloudNodes as StoredNode[]).map(fromStoredNode);
+    const nextConnections = (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection);
+    const cloudViewport = cloudMap.viewport_zoom == null
+      ? localViewport
+      : { x: cloudMap.viewport_x ?? 0, y: cloudMap.viewport_y ?? 0, zoom: cloudMap.viewport_zoom };
+    applyLoadedState(nextNodes, nextConnections, cloudViewport);
+    localStorage.setItem(mapCloudMigrationKey, "true");
   });
 
   useEffect(() => {
@@ -429,17 +588,58 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
 
   useEffect(() => {
     if (!loaded) return;
-    const timer = window.setTimeout(() => queueSave(nodes), 150);
-    return () => window.clearTimeout(timer);
-  }, [nodes, loaded]);
+    queueSave(nodes, connections);
+  }, [nodes, connections, loaded]);
+
+  const refreshFromCloud = useEffectEvent(async () => {
+    if (!loaded || cloudSaveRunning.current || cloudSaveQueue.current) return;
+    const supabase = createClient();
+    const [{ data: cloudNodes, error: nodeError }, { data: cloudConnections, error: connectionError }] = await Promise.all([
+      supabase.from("business_map_nodes").select("*").eq("map_id", mapId).order("sort_order"),
+      supabase.from("business_map_connections").select("*").eq("map_id", mapId),
+    ]);
+    if (nodeError || connectionError) return;
+    const nextNodes = (cloudNodes as StoredNode[]).map(fromStoredNode);
+    const nextConnections = (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection);
+    const preparedNodes = layoutTree(nextNodes);
+    cloudSnapshotToSkip.current = stateSnapshot(preparedNodes, nextConnections);
+    setNodes(hydrateActions(preparedNodes));
+    setConnections(nextConnections);
+    localStorage.setItem(mapStorageKey, JSON.stringify(preparedNodes.map(stripActions)));
+    localStorage.setItem(mapConnectionsKey, JSON.stringify(nextConnections));
+  });
+
+  const scheduleRealtimeRefresh = useEffectEvent(() => {
+    if (realtimeRefreshTimer.current) window.clearTimeout(realtimeRefreshTimer.current);
+    realtimeRefreshTimer.current = window.setTimeout(() => void refreshFromCloud(), 80);
+  });
 
   useEffect(() => {
-    if (!loaded) return;
-    const timer = window.setTimeout(() => {
-      localStorage.setItem(mapConnectionsKey, JSON.stringify(connections));
-    }, 150);
-    return () => window.clearTimeout(timer);
-  }, [connections, loaded, mapConnectionsKey]);
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`business-map-state-${mapId}`)
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "business_map_nodes",
+        filter: `map_id=eq.${mapId}`,
+      }, scheduleRealtimeRefresh)
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "business_map_connections",
+        filter: `map_id=eq.${mapId}`,
+      }, scheduleRealtimeRefresh)
+      .subscribe();
+    const refreshOnFocus = () => void refreshFromCloud();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      window.removeEventListener("focus", refreshOnFocus);
+      if (realtimeRefreshTimer.current) window.clearTimeout(realtimeRefreshTimer.current);
+      if (cloudRetryTimer.current) window.clearTimeout(cloudRetryTimer.current);
+      void supabase.removeChannel(channel);
+    };
+  }, [mapId]);
 
   const displayNodes = nodes.map((node) => ({
     ...node,
@@ -466,12 +666,19 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     const selected = connection.id === selectedConnectionId;
     return {
       ...connection,
-      type: "smoothstep",
+      type: "straight",
       className: "relation-edge",
       selected,
+      zIndex: 2,
       style: {
         stroke: "#17845f",
         strokeWidth: selected ? 3 : 2,
+      },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: "#17845f",
+        width: 18,
+        height: 18,
       },
     };
   }) : [];
@@ -482,8 +689,6 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     if (!connection.source || !connection.target || connection.source === connection.target) return;
     const duplicate = connections.some((item) => (
       item.source === connection.source && item.target === connection.target
-    ) || (
-      item.source === connection.target && item.target === connection.source
     ));
     if (duplicate) return;
     setConnections((current) => [...current, {
@@ -500,7 +705,15 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     const applicableChanges = isMarqueeSelecting.current || selectedInBatch > 1
       ? changes
       : changes.filter((change) => change.type !== "select");
-    setNodes((current) => hydrateActions(applyNodeChanges(applicableChanges, current)));
+    const movedNodeIds = new Set<string>();
+    applicableChanges.forEach((change) => {
+      if (change.type === "position" && change.position) movedNodeIds.add(change.id);
+    });
+    setNodes((current) => hydrateActions(
+      applyNodeChanges(applicableChanges, current).map((node) => movedNodeIds.has(node.id)
+        ? { ...node, data: { ...node.data, positionLocked: true } }
+        : node),
+    ));
   };
 
   const deleteNode = (id: string) => {
@@ -542,7 +755,13 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       color: source.data.color,
       placement: source.data.placement,
     });
-    copy.data = { ...source.data, heading: `${source.data.heading} copy`, sortOrder };
+    copy.data = {
+      ...source.data,
+      heading: `${source.data.heading} copy`,
+      sortOrder,
+      positionLocked: false,
+    };
+    copy.position = { x: 0, y: 0 };
     commit((current) => [...current, copy]);
     setSelectedId(idCopy);
     setMenu(null);
@@ -575,6 +794,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           sortOrder: isRoot ? nextSortOrder : node.data.sortOrder,
           placement: isRoot ? "right" : node.data.placement,
           collapsed: false,
+          positionLocked: false,
         },
       } satisfies MapNode;
     });
@@ -731,8 +951,6 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
               && connection.source !== connection.target
               && !connections.some((item) => (
                 item.source === connection.source && item.target === connection.target
-              ) || (
-                item.source === connection.target && item.target === connection.source
               )),
             )}
             onEdgeClick={(_, edge) => {
@@ -779,6 +997,15 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
             }}
             onMoveEnd={(_, viewport) => {
               localStorage.setItem(mapViewportKey, JSON.stringify(viewport));
+              if (viewportSaveTimer.current) window.clearTimeout(viewportSaveTimer.current);
+              viewportSaveTimer.current = window.setTimeout(() => {
+                void createClient().from("business_maps").update({
+                  viewport_x: viewport.x,
+                  viewport_y: viewport.y,
+                  viewport_zoom: viewport.zoom,
+                  updated_at: new Date().toISOString(),
+                }).eq("id", mapId);
+              }, 100);
             }}
             minZoom={0.18}
             maxZoom={1.8}

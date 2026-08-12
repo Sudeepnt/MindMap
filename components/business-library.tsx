@@ -2,9 +2,11 @@
 
 import { ArrowRight, Building2, Plus, Sparkles, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
+import { createClient } from "@/lib/supabase";
 
 const BUSINESSES_KEY = "opscanvas-businesses-v2";
+const BUSINESSES_MIGRATION_KEY = "opscanvas-businesses-cloud-migrated-v1";
 
 type BusinessSummary = {
   id: string;
@@ -24,29 +26,61 @@ export function BusinessLibrary() {
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
 
+  const readLocalBusinesses = () => {
+    const cached = localStorage.getItem(BUSINESSES_KEY);
+    if (!cached) return [defaultBusiness];
+    try {
+      const parsed = JSON.parse(cached) as unknown;
+      if (!Array.isArray(parsed)) throw new Error("Invalid business data");
+      const valid = parsed.filter((item): item is BusinessSummary => Boolean(
+        item && typeof item === "object" && "id" in item && "title" in item && "updated_at" in item,
+      ));
+      if (!valid.some((business) => business.id === defaultBusiness.id)) valid.push(defaultBusiness);
+      return valid;
+    } catch {
+      localStorage.removeItem(BUSINESSES_KEY);
+      return [defaultBusiness];
+    }
+  };
+
+  const loadBusinesses = useEffectEvent(async () => {
+    const localBusinesses = readLocalBusinesses();
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("business_maps")
+      .select("id,title,updated_at")
+      .order("updated_at", { ascending: false });
+    if (error) {
+      setBusinesses(localBusinesses);
+      return;
+    }
+    if (localStorage.getItem(BUSINESSES_MIGRATION_KEY) !== "true") {
+      const { error: migrationError } = await supabase.from("business_maps").upsert(localBusinesses);
+      if (!migrationError) localStorage.setItem(BUSINESSES_MIGRATION_KEY, "true");
+    }
+    const cloudBusinesses = data?.length ? data : localBusinesses;
+    setBusinesses(cloudBusinesses);
+    localStorage.setItem(BUSINESSES_KEY, JSON.stringify(cloudBusinesses));
+  });
+
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const cached = localStorage.getItem(BUSINESSES_KEY);
-      let nextBusinesses: BusinessSummary[] = [defaultBusiness];
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached) as unknown;
-          if (Array.isArray(parsed)) {
-            nextBusinesses = parsed.filter((item): item is BusinessSummary => Boolean(
-              item && typeof item === "object" && "id" in item && "title" in item && "updated_at" in item,
-            ));
-          }
-        } catch {
-          localStorage.removeItem(BUSINESSES_KEY);
-        }
-      }
-      if (!nextBusinesses.some((business) => business.id === defaultBusiness.id)) {
-        nextBusinesses.push(defaultBusiness);
-      }
-      setBusinesses(nextBusinesses);
-      localStorage.setItem(BUSINESSES_KEY, JSON.stringify(nextBusinesses));
-    }, 0);
-    return () => window.clearTimeout(timer);
+    const timer = window.setTimeout(() => void loadBusinesses(), 0);
+    const supabase = createClient();
+    const channel = supabase
+      .channel("business-library")
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "business_maps",
+      }, () => void loadBusinesses())
+      .subscribe();
+    const refreshOnFocus = () => void loadBusinesses();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", refreshOnFocus);
+      void supabase.removeChannel(channel);
+    };
   }, []);
 
   const createBusiness = async (event: React.FormEvent) => {
@@ -62,6 +96,8 @@ export function BusinessLibrary() {
     localStorage.setItem(BUSINESSES_KEY, JSON.stringify(nextBusinesses));
     setTitle("");
     setShowCreate(false);
+    const { error } = await createClient().from("business_maps").insert(nextBusiness);
+    if (error) setBusinesses(businesses);
     setCreating(false);
   };
 

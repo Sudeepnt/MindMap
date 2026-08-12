@@ -11,6 +11,7 @@ export type MapNodeData = {
   shape: "box" | "diamond" | "rounded";
   color: "default" | "blue" | "yellow" | "rose" | "lavender" | "slate";
   placement: "right" | "below";
+  positionLocked?: boolean;
   onAddChild?: (id: string) => void;
   onAddBelow?: (id: string) => void;
   onToggle?: (id: string) => void;
@@ -35,4 +36,14 @@ export type StoredNode = {
   node_shape: "box" | "diamond" | "rounded";
   node_color: "default" | "blue" | "yellow" | "rose" | "lavender" | "slate";
   placement: "right" | "below";
+  position_locked: boolean;
+};
+
+export type StoredConnection = {
+  id: string;
+  map_id: string;
+  source_id: string;
+  target_id: string;
+  source_handle: string | null;
+  target_handle: string | null;
 };

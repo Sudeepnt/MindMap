@@ -349,7 +349,6 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const future = useRef<MapNode[][]>([]);
   const flowInstance = useRef<ReactFlowInstance<MapNode, Edge> | null>(null);
   const pendingViewport = useRef<Viewport | null>(null);
-  const isMarqueeSelecting = useRef(false);
   const mapStorageKey = `${STORAGE_KEY}:${mapId}`;
   const mapViewportKey = `${VIEWPORT_KEY}:${mapId}`;
   const mapConnectionsKey = `${CONNECTIONS_KEY}:${mapId}`;
@@ -717,16 +716,13 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   };
 
   const onNodesChange = (changes: NodeChange<MapNode>[]) => {
-    const selectedInBatch = changes.filter((change) => change.type === "select" && change.selected).length;
-    const applicableChanges = isMarqueeSelecting.current || selectedInBatch > 1
-      ? changes
-      : changes.filter((change) => change.type !== "select");
     const movedNodeIds = new Set<string>();
-    applicableChanges.forEach((change) => {
+    const nonSelectionChanges = changes.filter((change) => change.type !== "select");
+    nonSelectionChanges.forEach((change) => {
       if (change.type === "position" && change.position) movedNodeIds.add(change.id);
     });
     setNodes((current) => hydrateActions(
-      applyNodeChanges(applicableChanges, current).map((node) => movedNodeIds.has(node.id)
+      applyNodeChanges(nonSelectionChanges, current).map((node) => movedNodeIds.has(node.id)
         ? { ...node, data: { ...node.data, positionLocked: true } }
         : node),
     ));
@@ -987,12 +983,16 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
               const additive = event.shiftKey || event.metaKey || event.ctrlKey;
               const updated = nodes.map((item) => ({
                 ...item,
-                selected: item.id === node.id ? (additive ? !item.selected : true) : additive ? item.selected : false,
+                selected: item.id === node.id
+                  ? additive ? !item.selected : true
+                  : additive ? item.selected : false,
               }));
               const selectedNodes = updated.filter((item) => item.selected);
               setNodes(hydrateActions(updated));
               setSelectedCount(selectedNodes.length);
-              setSelectedId(selectedNodes.some((item) => item.id === node.id) ? node.id : selectedNodes.at(-1)?.id ?? null);
+              setSelectedId(selectedNodes.some((item) => item.id === node.id)
+                ? node.id
+                : selectedNodes.at(-1)?.id ?? null);
               setSelectedConnectionId(null);
             }}
             onPaneClick={() => {
@@ -1000,12 +1000,6 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
               setSelectedCount(0);
               setSelectedId(null);
               setSelectedConnectionId(null);
-            }}
-            onSelectionStart={() => { isMarqueeSelecting.current = true; }}
-            onSelectionEnd={() => { isMarqueeSelecting.current = false; }}
-            onSelectionChange={({ nodes: selectedNodes }) => {
-              setSelectedCount(selectedNodes.length);
-              setSelectedId(selectedNodes.at(-1)?.id ?? null);
             }}
             onNodeDoubleClick={(_, node) => editNode(node.id)}
             onNodeContextMenu={(event, node) => {

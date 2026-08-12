@@ -15,6 +15,7 @@ export type MapNodeData = {
   onAddBelow?: (id: string) => void;
   onToggle?: (id: string) => void;
   childCount?: number;
+  connectionTargetVisible?: boolean;
 };
 
 export type MapNode = Node<MapNodeData, "businessNode">;

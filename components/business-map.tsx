@@ -3,6 +3,7 @@
 import {
   Background,
   BackgroundVariant,
+  ConnectionMode,
   Controls,
   Handle,
   MarkerType,
@@ -12,6 +13,7 @@ import {
   ReactFlowProvider,
   SelectionMode,
   applyNodeChanges,
+  type Connection,
   type Edge,
   type NodeChange,
   type NodeProps,
@@ -27,6 +29,7 @@ import {
   ClipboardPaste,
   Copy,
   Edit3,
+  Network,
   Plus,
   Redo2,
   Sparkles,
@@ -41,6 +44,7 @@ import type { MapNode, MapNodeData } from "@/lib/types";
 const DEFAULT_MAP_ID = "00000000-0000-4000-8000-000000000001";
 const STORAGE_KEY = "opscanvas-draft-v2";
 const VIEWPORT_KEY = "opscanvas-viewport-v2";
+const CONNECTIONS_KEY = "opscanvas-connections-v1";
 const X_GAP = 330;
 const Y_GAP = 150;
 
@@ -238,6 +242,8 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
       {data.description && <p>{data.description}</p>}
       <Handle type="source" position={Position.Right} className="node-handle" />
       <Handle id="bottom-source" type="source" position={Position.Bottom} className="node-handle vertical-handle" />
+      <Handle id="relation-source" type="source" position={Position.Right} className="relation-handle relation-source" title="Drag to connect this node" />
+      <Handle id="relation-target" type="target" position={Position.Left} className={`relation-handle relation-target ${data.connectionTargetVisible ? "is-visible" : ""}`} title="Drop to connect to this node" />
       <button className="add-control add-child nodrag" onClick={() => data.onAddChild?.(id)} aria-label="Add child">
         <Plus size={16} />
         <span>Add child</span>
@@ -254,6 +260,7 @@ const nodeTypes = { businessNode: BusinessNode };
 type EditorState = { id: string | null; parentId: string | null; heading: string; description: string; shape: MapNodeData["shape"]; color: MapNodeData["color"] };
 type MenuState = { id: string; x: number; y: number } | null;
 type BranchClipboard = { rootId: string; nodes: MapNode[] } | null;
+type StoredConnection = Pick<Edge, "id" | "source" | "target" | "sourceHandle" | "targetHandle">;
 
 export function BusinessMap({ mapId, mapTitle }: { mapId: string; mapTitle: string }) {
   return <ReactFlowProvider><BusinessMapCanvas mapId={mapId} mapTitle={mapTitle} /></ReactFlowProvider>;
@@ -268,6 +275,10 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [branchClipboard, setBranchClipboard] = useState<BranchClipboard>(null);
   const [selectedCount, setSelectedCount] = useState(0);
+  const [connections, setConnections] = useState<StoredConnection[]>([]);
+  const [connectionsVisible, setConnectionsVisible] = useState(true);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+  const [connectingSourceId, setConnectingSourceId] = useState<string | null>(null);
   const past = useRef<MapNode[][]>([]);
   const future = useRef<MapNode[][]>([]);
   const flowInstance = useRef<ReactFlowInstance<MapNode, Edge> | null>(null);
@@ -275,6 +286,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const isMarqueeSelecting = useRef(false);
   const mapStorageKey = `${STORAGE_KEY}:${mapId}`;
   const mapViewportKey = `${VIEWPORT_KEY}:${mapId}`;
+  const mapConnectionsKey = `${CONNECTIONS_KEY}:${mapId}`;
 
   const hydrateActions = (items: MapNode[]) => items.map((node) => ({
     ...node,
@@ -331,6 +343,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     delete data.onAddBelow;
     delete data.onToggle;
     delete data.childCount;
+    delete data.connectionTargetVisible;
     return { ...node, selected: false, data };
   }
 
@@ -364,6 +377,36 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
         : [makeNode(`root-${mapId}`, null, mapTitle, "Business operating model", 0)];
     }
     const positioned = hasSavedPositions ? initial.map(stripActions) : layoutTree(initial.map(stripActions));
+    const nodeIds = new Set(positioned.map((node) => node.id));
+    const cachedConnections = localStorage.getItem(mapConnectionsKey);
+    if (cachedConnections) {
+      try {
+        const parsed = JSON.parse(cachedConnections) as unknown;
+        if (!Array.isArray(parsed)) throw new Error("Invalid connection data");
+        setConnections(parsed
+          .filter((item): item is StoredConnection => Boolean(
+            item
+            && typeof item === "object"
+            && "id" in item
+            && "source" in item
+            && "target" in item
+            && typeof item.id === "string"
+            && typeof item.source === "string"
+            && typeof item.target === "string"
+            && item.source !== item.target
+            && nodeIds.has(item.source)
+            && nodeIds.has(item.target),
+          ))
+          .map((connection) => ({
+            ...connection,
+            sourceHandle: connection.sourceHandle === "relation" ? "relation-source" : connection.sourceHandle,
+            targetHandle: connection.targetHandle === "relation" ? "relation-target" : connection.targetHandle,
+          })));
+      } catch {
+        localStorage.removeItem(mapConnectionsKey);
+        setConnections([]);
+      }
+    } else setConnections([]);
     setNodes(hydrateActions(positioned));
     setLoaded(true);
 
@@ -390,7 +433,23 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     return () => window.clearTimeout(timer);
   }, [nodes, loaded]);
 
-  const edges: Edge[] = nodes
+  useEffect(() => {
+    if (!loaded) return;
+    const timer = window.setTimeout(() => {
+      localStorage.setItem(mapConnectionsKey, JSON.stringify(connections));
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [connections, loaded, mapConnectionsKey]);
+
+  const displayNodes = nodes.map((node) => ({
+    ...node,
+    data: {
+      ...node.data,
+      connectionTargetVisible: Boolean(connectingSourceId) && node.id !== connectingSourceId,
+    },
+  }));
+
+  const treeEdges: Edge[] = nodes
     .filter((node) => node.data.parentId && !node.hidden)
     .map((node) => ({
       id: `edge-${node.data.parentId}-${node.id}`,
@@ -403,6 +462,39 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       markerEnd: { type: MarkerType.ArrowClosed, color: node.data.aiSolution ? "#0f766e" : "#a9a8a2", width: 14, height: 14 },
     }));
 
+  const relationEdges: Edge[] = connectionsVisible ? connections.map((connection) => {
+    const selected = connection.id === selectedConnectionId;
+    return {
+      ...connection,
+      type: "smoothstep",
+      className: "relation-edge",
+      selected,
+      style: {
+        stroke: "#17845f",
+        strokeWidth: selected ? 3 : 2,
+      },
+    };
+  }) : [];
+
+  const edges = [...treeEdges, ...relationEdges];
+
+  const connectNodes = (connection: Connection) => {
+    if (!connection.source || !connection.target || connection.source === connection.target) return;
+    const duplicate = connections.some((item) => (
+      item.source === connection.source && item.target === connection.target
+    ) || (
+      item.source === connection.target && item.target === connection.source
+    ));
+    if (duplicate) return;
+    setConnections((current) => [...current, {
+      id: `relation-${crypto.randomUUID()}`,
+      source: connection.source!,
+      target: connection.target!,
+      sourceHandle: connection.sourceHandle,
+      targetHandle: connection.targetHandle,
+    }]);
+  };
+
   const onNodesChange = (changes: NodeChange<MapNode>[]) => {
     const selectedInBatch = changes.filter((change) => change.type === "select" && change.selected).length;
     const applicableChanges = isMarqueeSelecting.current || selectedInBatch > 1
@@ -413,8 +505,14 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
 
   const deleteNode = (id: string) => {
     const descendants = descendantsOf(nodes, id);
+    const deletedIds = new Set(descendants);
+    deletedIds.add(id);
     commit((current) => current.filter((node) => node.id !== id && !descendants.has(node.id)));
+    setConnections((current) => current.filter((connection) => (
+      !deletedIds.has(connection.source) && !deletedIds.has(connection.target)
+    )));
     setSelectedId(null);
+    setSelectedConnectionId(null);
     setMenu(null);
   };
 
@@ -428,6 +526,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     const restored = seedNodes.map((node) => node.id === "company"
       ? { ...node, data: { ...node.data, heading: mapTitle } }
       : node);
+    setConnections([]);
     commit(() => restored);
   };
 
@@ -545,7 +644,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
 
   const handleKeyboard = useEffectEvent((event: KeyboardEvent) => {
     const target = event.target as HTMLElement;
-    if (target.matches("input, textarea")) return;
+    if (target.matches("input, textarea, select")) return;
     const command = event.metaKey || event.ctrlKey;
     if (command && event.key.toLowerCase() === "z") {
       event.preventDefault();
@@ -560,6 +659,10 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     } else if (command && event.key.toLowerCase() === "d" && selectedId) {
       event.preventDefault();
       duplicateNode(selectedId);
+    } else if ((event.key === "Delete" || event.key === "Backspace") && selectedConnectionId) {
+      event.preventDefault();
+      setConnections((current) => current.filter((connection) => connection.id !== selectedConnectionId));
+      setSelectedConnectionId(null);
     } else if ((event.key === "Delete" || event.key === "Backspace") && selectedId) {
       event.preventDefault();
       deleteNode(selectedId);
@@ -579,6 +682,20 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
         <div className="brand"><span className="brand-mark"><Sparkles size={18} /></span><span>deepmap.ai</span></div>
         <div className="map-title"><Link href="/"><ArrowLeft size={14} />All businesses</Link><ChevronRight size={14} /><strong>{mapTitle}</strong></div>
         <div className="top-actions">
+          <button
+            className={`connections-toggle ${connectionsVisible ? "is-on" : ""}`}
+            aria-pressed={connectionsVisible}
+            onClick={(event) => {
+              event.stopPropagation();
+              setConnectionsVisible((visible) => !visible);
+              setSelectedConnectionId(null);
+            }}
+            title={connectionsVisible ? "Hide connection lines" : "Show connection lines"}
+          >
+            <Network size={15} />
+            <span>Connections</span>
+            <i>{connectionsVisible ? "On" : "Off"}</i>
+          </button>
           <button onClick={(event) => { event.stopPropagation(); undo(); }} disabled={!historyState.canUndo} title="Undo"><Undo2 size={17} /></button>
           <button onClick={(event) => { event.stopPropagation(); redo(); }} disabled={!historyState.canRedo} title="Redo"><Redo2 size={17} /></button>
           {selectedCount > 1 && <span className="selection-count">{selectedCount} nodes selected</span>}
@@ -600,10 +717,30 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
             </div>
           )}
           <ReactFlow<MapNode, Edge>
-            nodes={nodes}
+            nodes={displayNodes}
             edges={edges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
+            onConnect={connectNodes}
+            onConnectStart={(_, params) => setConnectingSourceId(params.nodeId)}
+            onConnectEnd={() => setConnectingSourceId(null)}
+            connectionMode={ConnectionMode.Strict}
+            isValidConnection={(connection) => Boolean(
+              connection.source
+              && connection.target
+              && connection.source !== connection.target
+              && !connections.some((item) => (
+                item.source === connection.source && item.target === connection.target
+              ) || (
+                item.source === connection.target && item.target === connection.source
+              )),
+            )}
+            onEdgeClick={(_, edge) => {
+              if (!edge.id.startsWith("relation-")) return;
+              setSelectedConnectionId(edge.id);
+              setSelectedId(null);
+              setNodes(hydrateActions(nodes.map((node) => ({ ...node, selected: false }))));
+            }}
             onNodeClick={(event, node) => {
               const additive = event.shiftKey || event.metaKey || event.ctrlKey;
               const updated = nodes.map((item) => ({
@@ -614,11 +751,13 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
               setNodes(hydrateActions(updated));
               setSelectedCount(selectedNodes.length);
               setSelectedId(selectedNodes.some((item) => item.id === node.id) ? node.id : selectedNodes.at(-1)?.id ?? null);
+              setSelectedConnectionId(null);
             }}
             onPaneClick={() => {
               setNodes(hydrateActions(nodes.map((node) => ({ ...node, selected: false }))));
               setSelectedCount(0);
               setSelectedId(null);
+              setSelectedConnectionId(null);
             }}
             onSelectionStart={() => { isMarqueeSelecting.current = true; }}
             onSelectionEnd={() => { isMarqueeSelecting.current = false; }}

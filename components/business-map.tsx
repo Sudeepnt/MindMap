@@ -350,6 +350,8 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const flowInstance = useRef<ReactFlowInstance<MapNode, Edge> | null>(null);
   const pendingViewport = useRef<Viewport | null>(null);
   const selectedNodeIds = useRef<Set<string>>(new Set());
+  const additiveSelectionPressed = useRef(false);
+  const nodeGestureActive = useRef(false);
   const mapStorageKey = `${STORAGE_KEY}:${mapId}`;
   const mapViewportKey = `${VIEWPORT_KEY}:${mapId}`;
   const mapConnectionsKey = `${CONNECTIONS_KEY}:${mapId}`;
@@ -363,7 +365,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const viewportSaveTimer = useRef<number | null>(null);
 
   function selectNode(event: MouseEvent | React.MouseEvent, id: string) {
-    const additive = event.shiftKey || event.metaKey || event.ctrlKey;
+    const additive = additiveSelectionPressed.current || event.shiftKey || event.metaKey || event.ctrlKey;
     const updated = nodes.map((item) => ({
       ...item,
       data: {
@@ -388,7 +390,19 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     if (!target.closest(".canvas-wrap") || target.closest("button, .react-flow__handle")) return;
     const nodeElement = target.closest<HTMLElement>(".react-flow__node[data-id]");
     const id = nodeElement?.dataset.id;
-    if (id) selectNode(event, id);
+    if (id) {
+      nodeGestureActive.current = true;
+      selectNode(event, id);
+      window.setTimeout(() => { nodeGestureActive.current = false; }, 0);
+    }
+  });
+
+  const trackSelectionModifier = useEffectEvent((event: KeyboardEvent) => {
+    additiveSelectionPressed.current = event.shiftKey || event.metaKey || event.ctrlKey;
+  });
+
+  const clearSelectionModifier = useEffectEvent(() => {
+    additiveSelectionPressed.current = false;
   });
 
   const hydrateActions = (items: MapNode[]) => items.map((node) => ({
@@ -955,9 +969,15 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyboard);
+    window.addEventListener("keydown", trackSelectionModifier);
+    window.addEventListener("keyup", trackSelectionModifier);
+    window.addEventListener("blur", clearSelectionModifier);
     document.addEventListener("mousedown", handleSelectionMouseDown, true);
     return () => {
       window.removeEventListener("keydown", handleKeyboard);
+      window.removeEventListener("keydown", trackSelectionModifier);
+      window.removeEventListener("keyup", trackSelectionModifier);
+      window.removeEventListener("blur", clearSelectionModifier);
       document.removeEventListener("mousedown", handleSelectionMouseDown, true);
     };
   }, []);
@@ -1032,6 +1052,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
               }))));
             }}
             onPaneClick={(event) => {
+              if (nodeGestureActive.current) return;
               if ((event.target as HTMLElement).closest(".react-flow__node")) return;
               selectedNodeIds.current.clear();
               setNodes(hydrateActions(nodes.map((node) => ({

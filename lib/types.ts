@@ -15,6 +15,7 @@ export type MapNodeData = {
   onAddChild?: (id: string) => void;
   onAddBelow?: (id: string) => void;
   onToggle?: (id: string) => void;
+  uiSelected?: boolean;
   childCount?: number;
   connectionTargetVisible?: boolean;
 };

@@ -286,7 +286,7 @@ function migrateManualPositions(nodes: MapNode[]): MapNode[] {
 function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
   const sizeClass = nodeSizeClass(data);
   return (
-    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""}`}>
+    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""}`}>
       <Handle type="target" position={Position.Left} className="node-handle" isConnectable={false} />
       <Handle id="top-target" type="target" position={Position.Top} className="node-handle vertical-handle" isConnectable={false} />
       <button
@@ -349,6 +349,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const future = useRef<MapNode[][]>([]);
   const flowInstance = useRef<ReactFlowInstance<MapNode, Edge> | null>(null);
   const pendingViewport = useRef<Viewport | null>(null);
+  const selectedNodeIds = useRef<Set<string>>(new Set());
   const mapStorageKey = `${STORAGE_KEY}:${mapId}`;
   const mapViewportKey = `${VIEWPORT_KEY}:${mapId}`;
   const mapConnectionsKey = `${CONNECTIONS_KEY}:${mapId}`;
@@ -356,9 +357,39 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const cloudSaveQueue = useRef<{ nodes: MapNode[]; connections: StoredMapConnection[] } | null>(null);
   const cloudSaveRunning = useRef(false);
   const cloudSnapshotToSkip = useRef<string | null>(null);
+  const lastPersistedSnapshot = useRef<string | null>(null);
   const cloudRetryTimer = useRef<number | null>(null);
   const realtimeRefreshTimer = useRef<number | null>(null);
   const viewportSaveTimer = useRef<number | null>(null);
+
+  function selectNode(event: MouseEvent | React.MouseEvent, id: string) {
+    const additive = event.shiftKey || event.metaKey || event.ctrlKey;
+    const updated = nodes.map((item) => ({
+      ...item,
+      data: {
+        ...item.data,
+        uiSelected: item.id === id
+          ? additive ? !selectedNodeIds.current.has(item.id) : true
+          : additive ? selectedNodeIds.current.has(item.id) : false,
+      },
+    }));
+    const selectedNodes = updated.filter((item) => item.data.uiSelected);
+    selectedNodeIds.current = new Set(selectedNodes.map((item) => item.id));
+    setNodes(updated);
+    setSelectedCount(selectedNodes.length);
+    setSelectedId(selectedNodes.some((item) => item.id === id)
+      ? id
+      : selectedNodes.at(-1)?.id ?? null);
+    setSelectedConnectionId(null);
+  }
+
+  const handleSelectionMouseDown = useEffectEvent((event: MouseEvent) => {
+    const target = event.target as HTMLElement;
+    if (!target.closest(".canvas-wrap") || target.closest("button, .react-flow__handle")) return;
+    const nodeElement = target.closest<HTMLElement>(".react-flow__node[data-id]");
+    const id = nodeElement?.dataset.id;
+    if (id) selectNode(event, id);
+  });
 
   const hydrateActions = (items: MapNode[]) => items.map((node) => ({
     ...node,
@@ -414,6 +445,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     delete data.onAddChild;
     delete data.onAddBelow;
     delete data.onToggle;
+    delete data.uiSelected;
     delete data.childCount;
     delete data.connectionTargetVisible;
     return { ...node, selected: false, data };
@@ -472,6 +504,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
         cloudRetryTimer.current = window.setTimeout(() => void flushCloudSave(), 1000);
         break;
       }
+      lastPersistedSnapshot.current = stateSnapshot(queued.nodes, queued.connections);
       localStorage.setItem(mapCloudMigrationKey, "true");
     }
     cloudSaveRunning.current = false;
@@ -482,8 +515,10 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     localStorage.setItem(mapStorageKey, JSON.stringify(cleanNodes));
     localStorage.setItem(mapConnectionsKey, JSON.stringify(currentConnections));
     const snapshot = stateSnapshot(cleanNodes, currentConnections);
+    if (lastPersistedSnapshot.current === snapshot) return;
     if (cloudSnapshotToSkip.current === snapshot) {
       cloudSnapshotToSkip.current = null;
+      lastPersistedSnapshot.current = snapshot;
       return;
     }
     cloudSaveQueue.current = { nodes: cleanNodes, connections: currentConnections };
@@ -539,7 +574,10 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
 
   const applyLoadedState = (nextNodes: MapNode[], nextConnections: StoredMapConnection[], viewport: Viewport | null) => {
     const preparedNodes = layoutTree(nextNodes);
-    cloudSnapshotToSkip.current = stateSnapshot(preparedNodes, nextConnections);
+    const snapshot = stateSnapshot(preparedNodes, nextConnections);
+    cloudSnapshotToSkip.current = snapshot;
+    lastPersistedSnapshot.current = snapshot;
+    selectedNodeIds.current.clear();
     setNodes(hydrateActions(preparedNodes));
     setConnections(nextConnections);
     setLoaded(true);
@@ -613,8 +651,13 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     const nextNodes = (cloudNodes as StoredNode[]).map(fromStoredNode);
     const nextConnections = (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection);
     const preparedNodes = layoutTree(nextNodes);
-    cloudSnapshotToSkip.current = stateSnapshot(preparedNodes, nextConnections);
-    setNodes(hydrateActions(preparedNodes));
+    const snapshot = stateSnapshot(preparedNodes, nextConnections);
+    cloudSnapshotToSkip.current = snapshot;
+    lastPersistedSnapshot.current = snapshot;
+    setNodes(hydrateActions(preparedNodes.map((node) => ({
+      ...node,
+      data: { ...node.data, uiSelected: selectedNodeIds.current.has(node.id) },
+    }))));
     setConnections(nextConnections);
     localStorage.setItem(mapStorageKey, JSON.stringify(preparedNodes.map(stripActions)));
     localStorage.setItem(mapConnectionsKey, JSON.stringify(nextConnections));
@@ -741,6 +784,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     )));
     setSelectedId(null);
     setSelectedCount(0);
+    selectedNodeIds.current.clear();
     setSelectedConnectionId(null);
     setMenu(null);
   };
@@ -903,15 +947,19 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       setSelectedConnectionId(null);
     } else if ((event.key === "Delete" || event.key === "Backspace") && selectedId) {
       event.preventDefault();
-      const selectedNodeIds = new Set(nodes.filter((node) => node.selected).map((node) => node.id));
-      selectedNodeIds.add(selectedId);
-      deleteNodes(selectedNodeIds);
+      const idsToDelete = new Set(selectedNodeIds.current);
+      idsToDelete.add(selectedId);
+      deleteNodes(idsToDelete);
     }
   });
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyboard);
-    return () => window.removeEventListener("keydown", handleKeyboard);
+    document.addEventListener("mousedown", handleSelectionMouseDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleKeyboard);
+      document.removeEventListener("mousedown", handleSelectionMouseDown, true);
+    };
   }, []);
 
   const menuNode = menu ? nodes.find((node) => node.id === menu.id) : null;
@@ -977,26 +1025,19 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
               if (!edge.id.startsWith("relation-")) return;
               setSelectedConnectionId(edge.id);
               setSelectedId(null);
-              setNodes(hydrateActions(nodes.map((node) => ({ ...node, selected: false }))));
+              selectedNodeIds.current.clear();
+              setNodes(hydrateActions(nodes.map((node) => ({
+                ...node,
+                data: { ...node.data, uiSelected: false },
+              }))));
             }}
-            onNodeClick={(event, node) => {
-              const additive = event.shiftKey || event.metaKey || event.ctrlKey;
-              const updated = nodes.map((item) => ({
-                ...item,
-                selected: item.id === node.id
-                  ? additive ? !item.selected : true
-                  : additive ? item.selected : false,
-              }));
-              const selectedNodes = updated.filter((item) => item.selected);
-              setNodes(hydrateActions(updated));
-              setSelectedCount(selectedNodes.length);
-              setSelectedId(selectedNodes.some((item) => item.id === node.id)
-                ? node.id
-                : selectedNodes.at(-1)?.id ?? null);
-              setSelectedConnectionId(null);
-            }}
-            onPaneClick={() => {
-              setNodes(hydrateActions(nodes.map((node) => ({ ...node, selected: false }))));
+            onPaneClick={(event) => {
+              if ((event.target as HTMLElement).closest(".react-flow__node")) return;
+              selectedNodeIds.current.clear();
+              setNodes(hydrateActions(nodes.map((node) => ({
+                ...node,
+                data: { ...node.data, uiSelected: false },
+              }))));
               setSelectedCount(0);
               setSelectedId(null);
               setSelectedConnectionId(null);
@@ -1004,7 +1045,11 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
             onNodeDoubleClick={(_, node) => editNode(node.id)}
             onNodeContextMenu={(event, node) => {
               event.preventDefault();
-              setNodes(hydrateActions(nodes.map((item) => ({ ...item, selected: item.id === node.id }))));
+              selectedNodeIds.current = new Set([node.id]);
+              setNodes(hydrateActions(nodes.map((item) => ({
+                ...item,
+                data: { ...item.data, uiSelected: item.id === node.id },
+              }))));
               setSelectedCount(1);
               setSelectedId(node.id);
               setMenu({ id: node.id, x: event.clientX, y: event.clientY });

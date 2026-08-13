@@ -238,6 +238,30 @@ function layoutTree(nodes: MapNode[]): MapNode[] {
   };
 
   (byParent.get(null) ?? []).forEach((root) => place(root, 0));
+
+  const applyLockedOffsets = (node: MapNode, offsetX = 0, offsetY = 0) => {
+    const automatic = positions.get(node.id);
+    if (!automatic) return;
+
+    const nextOffsetX = node.data.positionLocked ? node.position.x - automatic.x : offsetX;
+    const nextOffsetY = node.data.positionLocked ? node.position.y - automatic.y : offsetY;
+
+    positions.set(node.id, {
+      x: automatic.x + nextOffsetX,
+      y: automatic.y + nextOffsetY,
+    });
+
+    const children = [
+      ...(byParent.get(node.id) ?? []),
+      ...nodes
+        .filter((child) => child.data.parentId === node.id && child.data.placement === "below")
+        .sort((a, b) => a.data.sortOrder - b.data.sortOrder),
+    ];
+    children.forEach((child) => applyLockedOffsets(child, nextOffsetX, nextOffsetY));
+  };
+
+  (byParent.get(null) ?? []).forEach((root) => applyLockedOffsets(root));
+
   const placeMixedBranches = (node: MapNode) => {
     const parentPosition = positions.get(node.id);
     if (!parentPosition || node.data.collapsed) return;
@@ -261,7 +285,15 @@ function layoutTree(nodes: MapNode[]): MapNode[] {
     });
   };
   (byParent.get(null) ?? []).forEach(placeMixedBranches);
-  const minY = Math.min(...Array.from(positions.values(), (position) => position.y), 0);
+  nodes.forEach((node) => {
+    if (!node.data.positionLocked) return;
+    const current = positions.get(node.id);
+    if (!current) return;
+    positions.set(node.id, { x: node.position.x, y: node.position.y });
+  });
+  const minY = nodes.some((node) => node.data.positionLocked)
+    ? 0
+    : Math.min(...Array.from(positions.values(), (position) => position.y), 0);
   return nodes.map((node) => ({
     ...node,
     hidden: hidden.has(node.id),

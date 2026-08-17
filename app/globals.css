@@ -119,6 +119,13 @@ button { color: inherit; }
 .map-node.is-human.is-compact { min-height: 86px; }
 .map-node.is-human:hover { border-color: #5896b7; }
 .map-node.is-human.is-selected { box-shadow: 0 0 0 3px rgba(88, 150, 183, .18), 0 10px 25px rgba(52, 54, 48, .12); }
+.map-node.is-tool {
+  border-color: #8b78c9;
+  background: linear-gradient(145deg, #faf8ff, #ece5ff);
+  box-shadow: 0 10px 24px rgba(108, 85, 181, .12);
+}
+.map-node.is-tool:hover { border-color: #7058b1; }
+.map-node.is-tool.is-selected { box-shadow: 0 0 0 3px rgba(112, 88, 177, .18), 0 10px 25px rgba(52, 54, 48, .12); }
 .map-node.is-standalone {
   width: 300px;
   min-height: 102px;
@@ -140,6 +147,18 @@ button { color: inherit; }
 .ai-badge { width: max-content; margin: -3px 0 9px; display: flex; align-items: center; gap: 4px; color: var(--teal); font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .repeated-badge { width: max-content; margin: -3px 0 9px; display: flex; align-items: center; gap: 4px; color: #d46943; font-size: 9px; font-weight: 900; letter-spacing: .075em; text-transform: uppercase; }
 .ai-badge + .repeated-badge { margin-top: 0; }
+.tool-badge {
+  width: max-content;
+  margin: -3px 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #6d53af;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .075em;
+  text-transform: uppercase;
+}
 .standalone-badge {
   width: max-content;
   margin: -2px 0 10px;
@@ -183,6 +202,7 @@ button { color: inherit; }
 .is-ai .node-handle { background: var(--teal) !important; }
 .is-repeated .node-handle { background: #e57c51 !important; }
 .is-human .node-handle { background: #5ea4c8 !important; }
+.is-tool .node-handle { background: #7a62be !important; }
 .is-standalone .node-handle { background: #d49a2f !important; }
 .relation-handle { width: 15px !important; height: 15px !important; top: 50% !important; transform: translateY(-50%) !important; border: 3px solid #fffefa !important; border-radius: 50%; opacity: 0; pointer-events: none !important; background: #17845f !important; box-shadow: 0 0 0 1px #0f684b, 0 3px 8px rgba(15, 104, 75, .24); cursor: crosshair; transition: opacity .15s, transform .15s !important; }
 .relation-source { right: -8px !important; }

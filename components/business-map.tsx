@@ -31,6 +31,7 @@ import {
   ContactRound,
   Copy,
   Edit3,
+  Hammer,
   Network,
   Plus,
   Redo2,
@@ -66,6 +67,7 @@ type SeedOptions = {
   aiSolution?: boolean;
   repeatedWork?: boolean;
   humanBranch?: boolean;
+  toolNode?: boolean;
   standaloneNode?: boolean;
   shape?: MapNodeData["shape"];
   color?: MapNodeData["color"];
@@ -137,6 +139,7 @@ function makeNode(
       aiSolution: options.aiSolution ?? false,
       repeatedWork: options.repeatedWork ?? false,
       humanBranch: options.humanBranch ?? false,
+      toolNode: options.toolNode ?? false,
       standaloneNode: options.standaloneNode ?? false,
       shape: options.shape ?? "box",
       color: options.color ?? "default",
@@ -159,6 +162,7 @@ function fromStoredNode(item: StoredNode): MapNode {
       aiSolution: item.ai_solution,
       repeatedWork: item.repeated_work ?? false,
       humanBranch: item.human_branch ?? false,
+      toolNode: item.tool_node ?? false,
       standaloneNode: item.standalone_node ?? false,
       shape: item.node_shape ?? "box",
       color: item.node_color ?? "default",
@@ -344,7 +348,7 @@ function migrateManualPositions(nodes: MapNode[]): MapNode[] {
 function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
   const sizeClass = nodeSizeClass(data);
   return (
-    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""} ${data.humanBranch ? "is-human" : ""} ${data.standaloneNode ? "is-standalone" : ""}`}>
+    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""} ${data.humanBranch ? "is-human" : ""} ${data.toolNode ? "is-tool" : ""} ${data.standaloneNode ? "is-standalone" : ""}`}>
       <Handle type="target" position={Position.Left} className="node-handle" isConnectable={false} />
       <Handle id="top-target" type="target" position={Position.Top} className="node-handle vertical-handle" isConnectable={false} />
       <button
@@ -361,6 +365,9 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
       )}
       {data.repeatedWork && (
         <span className="repeated-badge"><Redo2 size={11} /> Most repeated work</span>
+      )}
+      {data.toolNode && (
+        <span className="tool-badge"><Hammer size={11} /> Tool node</span>
       )}
       {data.standaloneNode && (
         <span className="standalone-badge">Main step context</span>
@@ -646,6 +653,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     ai_solution: node.data.aiSolution,
     repeated_work: node.data.repeatedWork ?? false,
     human_branch: node.data.humanBranch ?? false,
+    tool_node: node.data.toolNode ?? false,
     standalone_node: node.data.standaloneNode ?? false,
     node_shape: node.data.shape ?? "box",
     node_color: node.data.color ?? "default",
@@ -1048,6 +1056,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       aiSolution: source.data.aiSolution,
       repeatedWork: source.data.repeatedWork,
       humanBranch: source.data.humanBranch,
+      toolNode: source.data.toolNode,
       standaloneNode: source.data.standaloneNode,
       shape: source.data.shape,
       color: source.data.color,
@@ -1111,6 +1120,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           ...node.data,
           aiSolution: !node.data.aiSolution,
           humanBranch: false,
+          toolNode: false,
           standaloneNode: false,
         },
       }
@@ -1126,6 +1136,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           ...node.data,
           repeatedWork: !node.data.repeatedWork,
           humanBranch: false,
+          toolNode: false,
           standaloneNode: false,
         },
       }
@@ -1142,9 +1153,29 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           humanBranch: !node.data.humanBranch,
           aiSolution: false,
           repeatedWork: false,
+          toolNode: false,
           shape: "box",
           color: "slate",
           standaloneNode: false,
+        },
+      }
+      : node));
+    setMenu(null);
+  };
+
+  const toggleToolNode = (id: string) => {
+    commit((current) => current.map((node) => node.id === id
+      ? {
+        ...node,
+        data: {
+          ...node.data,
+          toolNode: !node.data.toolNode,
+          aiSolution: false,
+          repeatedWork: false,
+          humanBranch: false,
+          standaloneNode: false,
+          shape: "box",
+          color: "lavender",
         },
       }
       : node));
@@ -1467,6 +1498,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           <button onClick={() => toggleAi(menu.id)}><Bot size={15} />{menuNode.data.aiSolution ? "Remove AI solution" : "Mark as AI solution"}</button>
           <button onClick={() => toggleRepeatedWork(menu.id)}><Redo2 size={15} />{menuNode.data.repeatedWork ? "Remove repeated work" : "Mark as most repeated work"}</button>
           <button onClick={() => toggleHumanBranch(menu.id)}><ContactRound size={15} />{menuNode.data.humanBranch ? "Remove human branch" : "Mark as human branch"}</button>
+          <button onClick={() => toggleToolNode(menu.id)}><Hammer size={15} />{menuNode.data.toolNode ? "Remove tool node" : "Mark as tool node"}</button>
           <div />
           <button className="danger" onClick={() => deleteNode(menu.id)}><Trash2 size={15} />Delete branch</button>
         </div>

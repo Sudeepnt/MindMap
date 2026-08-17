@@ -17,6 +17,7 @@ create table if not exists public.business_map_nodes (
   collapsed boolean not null default false,
   ai_solution boolean not null default false,
   repeated_work boolean not null default false,
+  human_branch boolean not null default false,
   node_shape text not null default 'box' check (node_shape in ('box', 'diamond', 'rounded')),
   node_color text not null default 'default' check (node_color in ('default', 'blue', 'yellow', 'rose', 'lavender', 'slate')),
   placement text not null default 'right' check (placement in ('right', 'below')),
@@ -29,6 +30,9 @@ create index if not exists business_map_nodes_parent_id_idx on public.business_m
 
 alter table public.business_map_nodes
 add column if not exists repeated_work boolean not null default false;
+
+alter table public.business_map_nodes
+add column if not exists human_branch boolean not null default false;
 
 insert into public.business_maps (id, title)
 values ('00000000-0000-4000-8000-000000000001', 'Digital Marketing Agency')

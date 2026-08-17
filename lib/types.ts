@@ -8,6 +8,7 @@ export type MapNodeData = {
   collapsed: boolean;
   aiSolution: boolean;
   repeatedWork: boolean;
+  humanBranch?: boolean;
   shape: "box" | "diamond" | "rounded";
   color: "default" | "blue" | "yellow" | "rose" | "lavender" | "slate";
   placement: "right" | "below";
@@ -34,6 +35,7 @@ export type StoredNode = {
   collapsed: boolean;
   ai_solution: boolean;
   repeated_work: boolean;
+  human_branch: boolean;
   node_shape: "box" | "diamond" | "rounded";
   node_color: "default" | "blue" | "yellow" | "rose" | "lavender" | "slate";
   placement: "right" | "below";

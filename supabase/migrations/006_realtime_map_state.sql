@@ -23,6 +23,7 @@ create table if not exists public.business_map_nodes (
   collapsed boolean not null default false,
   ai_solution boolean not null default false,
   repeated_work boolean not null default false,
+  human_branch boolean not null default false,
   node_shape text not null default 'box',
   node_color text not null default 'default',
   placement text not null default 'right',
@@ -48,6 +49,7 @@ alter table public.business_maps add column if not exists viewport_x real;
 alter table public.business_maps add column if not exists viewport_y real;
 alter table public.business_maps add column if not exists viewport_zoom real;
 alter table public.business_map_nodes add column if not exists repeated_work boolean not null default false;
+alter table public.business_map_nodes add column if not exists human_branch boolean not null default false;
 alter table public.business_map_nodes add column if not exists node_shape text not null default 'box';
 alter table public.business_map_nodes add column if not exists node_color text not null default 'default';
 alter table public.business_map_nodes add column if not exists placement text not null default 'right';
@@ -131,18 +133,18 @@ begin
 
   insert into public.business_map_nodes (
     id, map_id, parent_id, heading, description, sort_order, position_x,
-    position_y, collapsed, ai_solution, repeated_work, node_shape, node_color,
-    placement, position_locked, updated_at
+    position_y, collapsed, ai_solution, repeated_work, human_branch, node_shape,
+    node_color, placement, position_locked, updated_at
   )
   select
     node.id, p_map_id, null, node.heading, node.description, node.sort_order,
     node.position_x, node.position_y, node.collapsed, node.ai_solution,
-    node.repeated_work, node.node_shape, node.node_color, node.placement,
+    node.repeated_work, node.human_branch, node.node_shape, node.node_color, node.placement,
     node.position_locked, now()
   from jsonb_to_recordset(p_nodes) as node(
     id text, parent_id text, heading text, description text, sort_order integer,
     position_x real, position_y real, collapsed boolean, ai_solution boolean,
-    repeated_work boolean, node_shape text, node_color text, placement text,
+    repeated_work boolean, human_branch boolean, node_shape text, node_color text, placement text,
     position_locked boolean
   )
   on conflict (id) do update set
@@ -154,6 +156,7 @@ begin
     collapsed = excluded.collapsed,
     ai_solution = excluded.ai_solution,
     repeated_work = excluded.repeated_work,
+    human_branch = excluded.human_branch,
     node_shape = excluded.node_shape,
     node_color = excluded.node_color,
     placement = excluded.placement,

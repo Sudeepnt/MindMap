@@ -27,6 +27,7 @@ import {
   ChevronRight,
   ClipboardCopy,
   ClipboardPaste,
+  ContactRound,
   Copy,
   Edit3,
   Network,
@@ -47,6 +48,7 @@ const STORAGE_KEY = "opscanvas-draft-v2";
 const VIEWPORT_KEY = "opscanvas-viewport-v2";
 const CONNECTIONS_KEY = "opscanvas-connections-v1";
 const CLOUD_MIGRATION_KEY = "opscanvas-cloud-migrated-v1";
+const BRANCH_CLIPBOARD_KEY = "opscanvas-branch-clipboard-v1";
 const X_GAP = 330;
 const Y_GAP = 150;
 
@@ -62,6 +64,7 @@ const getServerPhoneViewport = () => false;
 type SeedOptions = {
   aiSolution?: boolean;
   repeatedWork?: boolean;
+  humanBranch?: boolean;
   shape?: MapNodeData["shape"];
   color?: MapNodeData["color"];
   placement?: MapNodeData["placement"];
@@ -131,6 +134,7 @@ function makeNode(
       collapsed: false,
       aiSolution: options.aiSolution ?? false,
       repeatedWork: options.repeatedWork ?? false,
+      humanBranch: options.humanBranch ?? false,
       shape: options.shape ?? "box",
       color: options.color ?? "default",
       placement: options.placement ?? "right",
@@ -151,6 +155,7 @@ function fromStoredNode(item: StoredNode): MapNode {
       collapsed: item.collapsed,
       aiSolution: item.ai_solution,
       repeatedWork: item.repeated_work ?? false,
+      humanBranch: item.human_branch ?? false,
       shape: item.node_shape ?? "box",
       color: item.node_color ?? "default",
       placement: item.placement ?? "right",
@@ -327,7 +332,7 @@ function migrateManualPositions(nodes: MapNode[]): MapNode[] {
 function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
   const sizeClass = nodeSizeClass(data);
   return (
-    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""}`}>
+    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""} ${data.humanBranch ? "is-human" : ""}`}>
       <Handle type="target" position={Position.Left} className="node-handle" isConnectable={false} />
       <Handle id="top-target" type="target" position={Position.Top} className="node-handle vertical-handle" isConnectable={false} />
       <button
@@ -345,8 +350,23 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
       {data.repeatedWork && (
         <span className="repeated-badge"><Redo2 size={11} /> Most repeated work</span>
       )}
-      <strong>{data.heading}</strong>
-      {data.description && <p>{data.description}</p>}
+      {data.humanBranch ? (
+        <div className="human-node-content">
+          <span className="human-node-avatar" aria-hidden="true">
+            <ContactRound size={26} strokeWidth={1.6} />
+          </span>
+          <div className="human-node-copy">
+            <span className="human-badge">Human branch</span>
+            <strong>{data.heading}</strong>
+            {data.description && <p>{data.description}</p>}
+          </div>
+        </div>
+      ) : (
+        <>
+          <strong>{data.heading}</strong>
+          {data.description && <p>{data.description}</p>}
+        </>
+      )}
       <Handle type="source" position={Position.Right} className="node-handle" isConnectable={false} />
       <Handle id="bottom-source" type="source" position={Position.Bottom} className="node-handle vertical-handle" isConnectable={false} />
       <Handle id="relation-source" type="source" position={Position.Right} className="relation-handle relation-source" title="Drag to connect this node" />
@@ -369,6 +389,32 @@ type MenuState = { id: string; x: number; y: number } | null;
 type BranchClipboard = { rootId: string; nodes: MapNode[] } | null;
 type StoredMapConnection = Pick<Edge, "id" | "source" | "target" | "sourceHandle" | "targetHandle">;
 
+function readBranchClipboard(): BranchClipboard {
+  if (typeof window === "undefined") return null;
+  const cached = localStorage.getItem(BRANCH_CLIPBOARD_KEY);
+  if (!cached) return null;
+  try {
+    const parsed = JSON.parse(cached) as unknown;
+    if (
+      !parsed
+      || typeof parsed !== "object"
+      || !("rootId" in parsed)
+      || !("nodes" in parsed)
+      || typeof parsed.rootId !== "string"
+      || !Array.isArray(parsed.nodes)
+    ) throw new Error("Invalid clipboard data");
+    return {
+      rootId: parsed.rootId,
+      nodes: parsed.nodes.filter((item): item is MapNode => Boolean(
+        item && typeof item === "object" && "id" in item && "data" in item && "position" in item,
+      )),
+    };
+  } catch {
+    localStorage.removeItem(BRANCH_CLIPBOARD_KEY);
+    return null;
+  }
+}
+
 export function BusinessMap({ mapId, mapTitle }: { mapId: string; mapTitle: string }) {
   return <ReactFlowProvider><BusinessMapCanvas mapId={mapId} mapTitle={mapTitle} /></ReactFlowProvider>;
 }
@@ -377,13 +423,14 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const phoneViewport = useSyncExternalStore(subscribeToPhoneViewport, getPhoneViewport, getServerPhoneViewport);
   const [interactionModeOverride, setInteractionMode] = useState<"view" | "edit" | null>(null);
   const interactionMode = interactionModeOverride ?? (phoneViewport ? "view" : "edit");
+  const phoneViewMode = phoneViewport && interactionMode === "view";
   const [nodes, setNodes] = useState<MapNode[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [menu, setMenu] = useState<MenuState>(null);
   const [loaded, setLoaded] = useState(false);
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
-  const [branchClipboard, setBranchClipboard] = useState<BranchClipboard>(null);
+  const [branchClipboard, setBranchClipboard] = useState<BranchClipboard>(() => readBranchClipboard());
   const [selectedCount, setSelectedCount] = useState(0);
   const [connections, setConnections] = useState<StoredMapConnection[]>([]);
   const [connectionsVisible, setConnectionsVisible] = useState(true);
@@ -399,16 +446,17 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const marqueeSelecting = useRef(false);
   const mapStorageKey = `${STORAGE_KEY}:${mapId}`;
   const mapViewportKey = `${VIEWPORT_KEY}:${mapId}`;
-  const mobileMapViewportKey = `${VIEWPORT_KEY}:mobile-v2:${mapId}`;
   const mapConnectionsKey = `${CONNECTIONS_KEY}:${mapId}`;
   const mapCloudMigrationKey = `${CLOUD_MIGRATION_KEY}:${mapId}`;
   const cloudSaveQueue = useRef<{ nodes: MapNode[]; connections: StoredMapConnection[] } | null>(null);
   const cloudSaveRunning = useRef(false);
   const cloudSnapshotToSkip = useRef<string | null>(null);
   const lastPersistedSnapshot = useRef<string | null>(null);
+  const latestSnapshot = useRef<string | null>(null);
   const cloudRetryTimer = useRef<number | null>(null);
   const realtimeRefreshTimer = useRef<number | null>(null);
   const viewportSaveTimer = useRef<number | null>(null);
+  const pendingFocusNodeId = useRef<string | null>(null);
 
   function selectNode(event: MouseEvent | React.MouseEvent, id: string) {
     if (interactionMode === "view") return;
@@ -481,6 +529,31 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     });
   };
 
+  const setSingleSelection = useEffectEvent((id: string | null) => {
+    selectedNodeIds.current = id ? new Set([id]) : new Set();
+    setSelectedId(id);
+    setSelectedCount(id ? 1 : 0);
+    setSelectedConnectionId(null);
+    setNodes((current) => hydrateActions(current.map((node) => ({
+      ...node,
+      selected: id === node.id,
+      data: {
+        ...node.data,
+        uiSelected: id === node.id,
+      },
+    }))));
+  });
+
+  const focusNodeOnPhone = useEffectEvent((id: string) => {
+    if (!phoneViewport || !flowInstance.current) return;
+    const node = nodes.find((item) => item.id === id);
+    if (!node) return;
+    void flowInstance.current.setCenter(node.position.x + 115, node.position.y + 43, {
+      zoom: 0.86,
+      duration: 220,
+    });
+  });
+
   function addChild(parentId: string) {
     const siblings = nodes.filter((node) => node.data.parentId === parentId);
     setEditor({ id: null, parentId, heading: "", description: "", shape: "box", color: "default" });
@@ -530,6 +603,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     collapsed: node.data.collapsed,
     ai_solution: node.data.aiSolution,
     repeated_work: node.data.repeatedWork ?? false,
+    human_branch: node.data.humanBranch ?? false,
     node_shape: node.data.shape ?? "box",
     node_color: node.data.color ?? "default",
     placement: node.data.placement ?? "right",
@@ -573,6 +647,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
         break;
       }
       lastPersistedSnapshot.current = stateSnapshot(queued.nodes, queued.connections);
+      latestSnapshot.current = lastPersistedSnapshot.current;
       localStorage.setItem(mapCloudMigrationKey, "true");
     }
     cloudSaveRunning.current = false;
@@ -583,10 +658,12 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     localStorage.setItem(mapStorageKey, JSON.stringify(cleanNodes));
     localStorage.setItem(mapConnectionsKey, JSON.stringify(currentConnections));
     const snapshot = stateSnapshot(cleanNodes, currentConnections);
+    latestSnapshot.current = snapshot;
     if (lastPersistedSnapshot.current === snapshot) return;
     if (cloudSnapshotToSkip.current === snapshot) {
       cloudSnapshotToSkip.current = null;
       lastPersistedSnapshot.current = snapshot;
+      latestSnapshot.current = snapshot;
       return;
     }
     cloudSaveQueue.current = { nodes: cleanNodes, connections: currentConnections };
@@ -645,6 +722,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     const snapshot = stateSnapshot(preparedNodes, nextConnections);
     cloudSnapshotToSkip.current = snapshot;
     lastPersistedSnapshot.current = snapshot;
+    latestSnapshot.current = snapshot;
     selectedNodeIds.current.clear();
     setNodes(hydrateActions(preparedNodes));
     setConnections(nextConnections);
@@ -670,8 +748,10 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
         : [makeNode(`root-${mapId}`, null, mapTitle, "Business operating model", 0)]).map(stripActions));
     const localConnections = parseLocalConnections(new Set(fallbackNodes.map((node) => node.id)));
 
-    const legacyViewport = localStorage.getItem(mobileViewport ? mobileMapViewportKey : mapViewportKey)
-      ?? (!mobileViewport && mapId === DEFAULT_MAP_ID ? localStorage.getItem(VIEWPORT_KEY) : null);
+    const legacyViewport = !mobileViewport
+      ? localStorage.getItem(mapViewportKey)
+        ?? (mapId === DEFAULT_MAP_ID ? localStorage.getItem(VIEWPORT_KEY) : null)
+      : null;
     const localViewport = legacyViewport ? JSON.parse(legacyViewport) as Viewport : null;
     const supabase = createClient();
     const [{ data: cloudNodes, error: nodeError }, { data: cloudConnections, error: connectionError }, { data: cloudMap, error: mapError }] = await Promise.all([
@@ -712,8 +792,18 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     queueSave(nodes, connections);
   }, [nodes, connections, loaded]);
 
+  useEffect(() => {
+    const focusId = pendingFocusNodeId.current;
+    if (!focusId) return;
+    if (!nodes.some((node) => node.id === focusId)) return;
+    pendingFocusNodeId.current = null;
+    setSingleSelection(focusId);
+    focusNodeOnPhone(focusId);
+  }, [nodes]);
+
   const refreshFromCloud = useEffectEvent(async () => {
     if (!loaded || cloudSaveRunning.current || cloudSaveQueue.current) return;
+    if (latestSnapshot.current && latestSnapshot.current !== lastPersistedSnapshot.current) return;
     const supabase = createClient();
     const [{ data: cloudNodes, error: nodeError }, { data: cloudConnections, error: connectionError }] = await Promise.all([
       supabase.from("business_map_nodes").select("*").eq("map_id", mapId).order("sort_order"),
@@ -726,6 +816,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     const snapshot = stateSnapshot(preparedNodes, nextConnections);
     cloudSnapshotToSkip.current = snapshot;
     lastPersistedSnapshot.current = snapshot;
+    latestSnapshot.current = snapshot;
     setNodes(hydrateActions(preparedNodes.map((node) => ({
       ...node,
       selected: selectedNodeIds.current.has(node.id),
@@ -904,6 +995,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     const copy = makeNode(idCopy, source.data.parentId, `${source.data.heading} copy`, source.data.description, sortOrder, {
       aiSolution: source.data.aiSolution,
       repeatedWork: source.data.repeatedWork,
+      humanBranch: source.data.humanBranch,
       shape: source.data.shape,
       color: source.data.color,
       placement: source.data.placement,
@@ -916,17 +1008,19 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     };
     copy.position = { x: 0, y: 0 };
     commit((current) => [...current, copy]);
-    setSelectedId(idCopy);
+    pendingFocusNodeId.current = idCopy;
     setMenu(null);
   };
 
   const copyBranch = (id: string) => {
     const branchIds = descendantsOf(nodes, id);
     branchIds.add(id);
-    setBranchClipboard({
+    const nextClipboard = {
       rootId: id,
       nodes: nodes.filter((node) => branchIds.has(node.id)).map(stripActions),
-    });
+    };
+    setBranchClipboard(nextClipboard);
+    localStorage.setItem(BRANCH_CLIPBOARD_KEY, JSON.stringify(nextClipboard));
     setMenu(null);
   };
 
@@ -952,20 +1046,51 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       } satisfies MapNode;
     });
     commit((current) => [...current, ...copies]);
-    setSelectedId(idMap.get(branchClipboard.rootId)!);
+    pendingFocusNodeId.current = idMap.get(branchClipboard.rootId)!;
     setMenu(null);
   };
 
   const toggleAi = (id: string) => {
     commit((current) => current.map((node) => node.id === id
-      ? { ...node, data: { ...node.data, aiSolution: !node.data.aiSolution } }
+      ? {
+        ...node,
+        data: {
+          ...node.data,
+          aiSolution: !node.data.aiSolution,
+          humanBranch: false,
+        },
+      }
       : node));
     setMenu(null);
   };
 
   const toggleRepeatedWork = (id: string) => {
     commit((current) => current.map((node) => node.id === id
-      ? { ...node, data: { ...node.data, repeatedWork: !node.data.repeatedWork } }
+      ? {
+        ...node,
+        data: {
+          ...node.data,
+          repeatedWork: !node.data.repeatedWork,
+          humanBranch: false,
+        },
+      }
+      : node));
+    setMenu(null);
+  };
+
+  const toggleHumanBranch = (id: string) => {
+    commit((current) => current.map((node) => node.id === id
+      ? {
+        ...node,
+        data: {
+          ...node.data,
+          humanBranch: !node.data.humanBranch,
+          aiSolution: false,
+          repeatedWork: false,
+          shape: "box",
+          color: "slate",
+        },
+      }
       : node));
     setMenu(null);
   };
@@ -990,7 +1115,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       newNode.data.color = editor.color;
       newNode.data.placement = pendingPlacement.current;
       commit((current) => [...current, newNode]);
-      setSelectedId(id);
+      pendingFocusNodeId.current = id;
     }
     setEditor(null);
   };
@@ -1061,6 +1186,19 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   }, []);
 
   const menuNode = menu ? nodes.find((node) => node.id === menu.id) : null;
+  const mobileQuickActionLabel = interactionMode === "view"
+    ? "Edit map"
+    : selectedId
+      ? "Add child"
+      : "Add node";
+  const handleMobileQuickAction = () => {
+    if (interactionMode === "view") {
+      setInteractionMode("edit");
+      return;
+    }
+    if (selectedId) addChild(selectedId);
+    else addRoot();
+  };
 
   return (
     <main className={`app-shell mode-${interactionMode}`} onClick={() => setMenu(null)}>
@@ -1126,6 +1264,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
             </div>
           )}
           <ReactFlow<MapNode, Edge>
+            className={phoneViewport ? "phone-flow" : undefined}
             nodes={displayNodes}
             edges={edges}
             nodeTypes={nodeTypes}
@@ -1199,7 +1338,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
             }}
             onMoveEnd={(_, viewport) => {
               const mobileViewport = window.matchMedia("(max-width: 760px)").matches;
-              localStorage.setItem(mobileViewport ? mobileMapViewportKey : mapViewportKey, JSON.stringify(viewport));
+              if (!mobileViewport) localStorage.setItem(mapViewportKey, JSON.stringify(viewport));
               if (mobileViewport) return;
               if (viewportSaveTimer.current) window.clearTimeout(viewportSaveTimer.current);
               viewportSaveTimer.current = window.setTimeout(() => {
@@ -1214,17 +1353,33 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
             minZoom={0.18}
             maxZoom={1.8}
             deleteKeyCode={null}
+            nodeClickDistance={phoneViewport ? 10 : 0}
+            paneClickDistance={phoneViewport ? 10 : 1}
             selectionOnDrag={false}
             selectionMode={SelectionMode.Partial}
             selectionKeyCode="Shift"
             multiSelectionKeyCode={["Shift", "Meta", "Control"]}
-            panOnDrag
+            panOnDrag={phoneViewMode ? [0] : true}
+            onlyRenderVisibleElements={phoneViewport}
             proOptions={{ hideAttribution: true }}
           >
             <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} color="#d7d4cb" />
             <Controls showInteractive={false} />
             <MiniMap pannable zoomable nodeColor={(node) => node.data.aiSolution ? "#0f766e" : "#d7d3c8"} maskColor="rgba(247, 246, 241, .78)" />
           </ReactFlow>
+          {phoneViewport && loaded && (
+            <button
+              className="mobile-quick-add"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleMobileQuickAction();
+              }}
+              type="button"
+            >
+              {interactionMode === "view" ? <Edit3 size={18} /> : <Plus size={18} />}
+              <span>{mobileQuickActionLabel}</span>
+            </button>
+          )}
         </div>
       </section>
 
@@ -1238,6 +1393,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           <button onClick={() => duplicateNode(menu.id)}><Copy size={15} />Duplicate</button>
           <button onClick={() => toggleAi(menu.id)}><Bot size={15} />{menuNode.data.aiSolution ? "Remove AI solution" : "Mark as AI solution"}</button>
           <button onClick={() => toggleRepeatedWork(menu.id)}><Redo2 size={15} />{menuNode.data.repeatedWork ? "Remove repeated work" : "Mark as most repeated work"}</button>
+          <button onClick={() => toggleHumanBranch(menu.id)}><ContactRound size={15} />{menuNode.data.humanBranch ? "Remove human branch" : "Mark as human branch"}</button>
           <div />
           <button className="danger" onClick={() => deleteNode(menu.id)}><Trash2 size={15} />Delete branch</button>
         </div>

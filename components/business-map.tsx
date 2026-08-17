@@ -182,12 +182,29 @@ function fromStoredConnection(item: StoredConnectionRow): StoredMapConnection {
   };
 }
 
-function mergeLocalHumanBranches(nextNodes: MapNode[], localNodes: MapNode[] | null): MapNode[] {
+function mergeLocalVisualState(nextNodes: MapNode[], localNodes: MapNode[] | null): MapNode[] {
   if (!localNodes?.length) return nextNodes;
-  const localHumanBranchById = new Map(localNodes.map((node) => [node.id, Boolean(node.data.humanBranch)]));
-  return nextNodes.map((node) => localHumanBranchById.has(node.id)
-    ? { ...node, data: { ...node.data, humanBranch: localHumanBranchById.get(node.id)! } }
-    : node);
+  const localNodeById = new Map(localNodes.map((node) => [node.id, node]));
+  return nextNodes.map((node) => {
+    const localNode = localNodeById.get(node.id);
+    return localNode
+      ? {
+        ...node,
+        position: localNode.data.positionLocked ? localNode.position : node.position,
+        data: {
+          ...node.data,
+          aiSolution: Boolean(localNode.data.aiSolution),
+          repeatedWork: Boolean(localNode.data.repeatedWork),
+          humanBranch: Boolean(localNode.data.humanBranch),
+          toolNode: Boolean(localNode.data.toolNode),
+          standaloneNode: Boolean(localNode.data.standaloneNode),
+          shape: localNode.data.shape ?? node.data.shape,
+          color: localNode.data.color ?? node.data.color,
+          positionLocked: Boolean(localNode.data.positionLocked),
+        },
+      }
+      : node;
+  });
 }
 
 function descendantsOf(nodes: MapNode[], id: string): Set<string> {
@@ -824,7 +841,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       return;
     }
 
-    const nextNodes = mergeLocalHumanBranches(
+    const nextNodes = mergeLocalVisualState(
       (cloudNodes as StoredNode[]).map(fromStoredNode),
       localNodes,
     );
@@ -865,7 +882,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       supabase.from("business_map_connections").select("*").eq("map_id", mapId),
     ]);
     if (nodeError || connectionError) return;
-    const nextNodes = mergeLocalHumanBranches(
+    const nextNodes = mergeLocalVisualState(
       (cloudNodes as StoredNode[]).map(fromStoredNode),
       localNodes,
     );

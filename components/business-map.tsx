@@ -174,6 +174,14 @@ function fromStoredConnection(item: StoredConnectionRow): StoredMapConnection {
   };
 }
 
+function mergeLocalHumanBranches(nextNodes: MapNode[], localNodes: MapNode[] | null): MapNode[] {
+  if (!localNodes?.length) return nextNodes;
+  const localHumanBranchById = new Map(localNodes.map((node) => [node.id, Boolean(node.data.humanBranch)]));
+  return nextNodes.map((node) => localHumanBranchById.has(node.id)
+    ? { ...node, data: { ...node.data, humanBranch: localHumanBranchById.get(node.id)! } }
+    : node);
+}
+
 function descendantsOf(nodes: MapNode[], id: string): Set<string> {
   const result = new Set<string>();
   const visit = (parentId: string) => {
@@ -773,7 +781,10 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       return;
     }
 
-    const nextNodes = (cloudNodes as StoredNode[]).map(fromStoredNode);
+    const nextNodes = mergeLocalHumanBranches(
+      (cloudNodes as StoredNode[]).map(fromStoredNode),
+      localNodes,
+    );
     const nextConnections = (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection);
     const cloudViewport = mobileViewport || cloudMap.viewport_zoom == null
       ? localViewport
@@ -804,13 +815,17 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const refreshFromCloud = useEffectEvent(async () => {
     if (!loaded || cloudSaveRunning.current || cloudSaveQueue.current) return;
     if (latestSnapshot.current && latestSnapshot.current !== lastPersistedSnapshot.current) return;
+    const localNodes = parseLocalNodes();
     const supabase = createClient();
     const [{ data: cloudNodes, error: nodeError }, { data: cloudConnections, error: connectionError }] = await Promise.all([
       supabase.from("business_map_nodes").select("*").eq("map_id", mapId).order("sort_order"),
       supabase.from("business_map_connections").select("*").eq("map_id", mapId),
     ]);
     if (nodeError || connectionError) return;
-    const nextNodes = (cloudNodes as StoredNode[]).map(fromStoredNode);
+    const nextNodes = mergeLocalHumanBranches(
+      (cloudNodes as StoredNode[]).map(fromStoredNode),
+      localNodes,
+    );
     const nextConnections = (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection);
     const preparedNodes = layoutTree(nextNodes);
     const snapshot = stateSnapshot(preparedNodes, nextConnections);

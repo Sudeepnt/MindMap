@@ -19,6 +19,7 @@ import {
   type NodeProps,
   type ReactFlowInstance,
   type Viewport,
+  type XYPosition,
 } from "@xyflow/react";
 import {
   ArrowLeft,
@@ -65,6 +66,7 @@ type SeedOptions = {
   aiSolution?: boolean;
   repeatedWork?: boolean;
   humanBranch?: boolean;
+  standaloneNode?: boolean;
   shape?: MapNodeData["shape"];
   color?: MapNodeData["color"];
   placement?: MapNodeData["placement"];
@@ -135,6 +137,7 @@ function makeNode(
       aiSolution: options.aiSolution ?? false,
       repeatedWork: options.repeatedWork ?? false,
       humanBranch: options.humanBranch ?? false,
+      standaloneNode: options.standaloneNode ?? false,
       shape: options.shape ?? "box",
       color: options.color ?? "default",
       placement: options.placement ?? "right",
@@ -156,6 +159,7 @@ function fromStoredNode(item: StoredNode): MapNode {
       aiSolution: item.ai_solution,
       repeatedWork: item.repeated_work ?? false,
       humanBranch: item.human_branch ?? false,
+      standaloneNode: item.standalone_node ?? false,
       shape: item.node_shape ?? "box",
       color: item.node_color ?? "default",
       placement: item.placement ?? "right",
@@ -340,7 +344,7 @@ function migrateManualPositions(nodes: MapNode[]): MapNode[] {
 function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
   const sizeClass = nodeSizeClass(data);
   return (
-    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""} ${data.humanBranch ? "is-human" : ""}`}>
+    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""} ${data.humanBranch ? "is-human" : ""} ${data.standaloneNode ? "is-standalone" : ""}`}>
       <Handle type="target" position={Position.Left} className="node-handle" isConnectable={false} />
       <Handle id="top-target" type="target" position={Position.Top} className="node-handle vertical-handle" isConnectable={false} />
       <button
@@ -357,6 +361,9 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
       )}
       {data.repeatedWork && (
         <span className="repeated-badge"><Redo2 size={11} /> Most repeated work</span>
+      )}
+      {data.standaloneNode && (
+        <span className="standalone-badge">Main step context</span>
       )}
       {data.humanBranch ? (
         <div className="human-node-content">
@@ -447,6 +454,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const past = useRef<MapNode[][]>([]);
   const future = useRef<MapNode[][]>([]);
   const flowInstance = useRef<ReactFlowInstance<MapNode, Edge> | null>(null);
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const pendingViewport = useRef<Viewport | null>(null);
   const selectedNodeIds = useRef<Set<string>>(new Set());
   const additiveSelectionPressed = useRef(false);
@@ -465,6 +473,14 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const realtimeRefreshTimer = useRef<number | null>(null);
   const viewportSaveTimer = useRef<number | null>(null);
   const pendingFocusNodeId = useRef<string | null>(null);
+  const pendingStandalonePosition = useRef<XYPosition | null>(null);
+  const pendingStandaloneNode = useRef(false);
+
+  const closeEditor = () => {
+    pendingStandalonePosition.current = null;
+    pendingStandaloneNode.current = false;
+    setEditor(null);
+  };
 
   function selectNode(event: MouseEvent | React.MouseEvent, id: string) {
     if (interactionMode === "view") return;
@@ -562,6 +578,15 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     });
   });
 
+  const getStandalonePosition = () => {
+    if (!flowInstance.current || !canvasWrapRef.current) return null;
+    const bounds = canvasWrapRef.current.getBoundingClientRect();
+    return flowInstance.current.screenToFlowPosition({
+      x: bounds.left + (bounds.width / 2) - 140,
+      y: bounds.top + (bounds.height / 2) - 48,
+    });
+  };
+
   function addChild(parentId: string) {
     const siblings = nodes.filter((node) => node.data.parentId === parentId);
     setEditor({ id: null, parentId, heading: "", description: "", shape: "box", color: "default" });
@@ -580,6 +605,15 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     pendingSort.current = nodes.filter((item) => item.data.parentId === id && item.data.placement === "below").length;
     pendingPlacement.current = "below";
     setEditor({ id: null, parentId: id, heading: "", description: "", shape: "box", color: "default" });
+    setMenu(null);
+  }
+
+  function addStandaloneNode() {
+    pendingSort.current = nodes.filter((node) => node.data.parentId === null).length;
+    pendingPlacement.current = "right";
+    pendingStandalonePosition.current = getStandalonePosition();
+    pendingStandaloneNode.current = true;
+    setEditor({ id: null, parentId: null, heading: "", description: "", shape: "box", color: "default" });
     setMenu(null);
   }
 
@@ -612,6 +646,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     ai_solution: node.data.aiSolution,
     repeated_work: node.data.repeatedWork ?? false,
     human_branch: node.data.humanBranch ?? false,
+    standalone_node: node.data.standaloneNode ?? false,
     node_shape: node.data.shape ?? "box",
     node_color: node.data.color ?? "default",
     placement: node.data.placement ?? "right",
@@ -991,6 +1026,8 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const addRoot = () => {
     pendingSort.current = nodes.filter((node) => node.data.parentId === null).length;
     pendingPlacement.current = "right";
+    pendingStandalonePosition.current = null;
+    pendingStandaloneNode.current = false;
     setEditor({ id: null, parentId: null, heading: "", description: "", shape: "box", color: "default" });
   };
 
@@ -1011,6 +1048,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       aiSolution: source.data.aiSolution,
       repeatedWork: source.data.repeatedWork,
       humanBranch: source.data.humanBranch,
+      standaloneNode: source.data.standaloneNode,
       shape: source.data.shape,
       color: source.data.color,
       placement: source.data.placement,
@@ -1073,6 +1111,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           ...node.data,
           aiSolution: !node.data.aiSolution,
           humanBranch: false,
+          standaloneNode: false,
         },
       }
       : node));
@@ -1087,6 +1126,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           ...node.data,
           repeatedWork: !node.data.repeatedWork,
           humanBranch: false,
+          standaloneNode: false,
         },
       }
       : node));
@@ -1104,6 +1144,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           repeatedWork: false,
           shape: "box",
           color: "slate",
+          standaloneNode: false,
         },
       }
       : node));
@@ -1129,9 +1170,16 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       newNode.data.shape = editor.shape;
       newNode.data.color = editor.color;
       newNode.data.placement = pendingPlacement.current;
+      newNode.data.standaloneNode = pendingStandaloneNode.current;
+      if (pendingStandalonePosition.current) {
+        newNode.position = pendingStandalonePosition.current;
+        newNode.data.positionLocked = true;
+      }
       commit((current) => [...current, newNode]);
       pendingFocusNodeId.current = id;
     }
+    pendingStandalonePosition.current = null;
+    pendingStandaloneNode.current = false;
     setEditor(null);
   };
 
@@ -1245,6 +1293,15 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
         </label>
         <div className="top-actions">
           <button
+            onClick={(event) => {
+              event.stopPropagation();
+              addStandaloneNode();
+            }}
+            title="Add standalone node"
+          >
+            <Plus size={17} />
+          </button>
+          <button
             className={`connections-toggle ${connectionsVisible ? "is-on" : ""}`}
             aria-pressed={connectionsVisible}
             onClick={(event) => {
@@ -1265,7 +1322,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       </header>
 
       <section className="workspace">
-        <div className="canvas-wrap">
+        <div className="canvas-wrap" ref={canvasWrapRef}>
           {!loaded && <div className="loading">Opening map...</div>}
           {loaded && !nodes.length && (
             <div className="empty-map">
@@ -1403,6 +1460,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           <button onClick={() => editNode(menu.id)}><Edit3 size={15} />Edit</button>
           <button onClick={() => addChild(menu.id)}><Plus size={15} />Add child</button>
           <button onClick={() => addBelow(menu.id)}><Plus size={15} />Add node below</button>
+          <button onClick={() => addStandaloneNode()}><Plus size={15} />Add standalone node</button>
           <button onClick={() => copyBranch(menu.id)}><ClipboardCopy size={15} />Copy branch</button>
           <button onClick={() => pasteBranch(menu.id)} disabled={!branchClipboard}><ClipboardPaste size={15} />Paste as child</button>
           <button onClick={() => duplicateNode(menu.id)}><Copy size={15} />Duplicate</button>
@@ -1415,9 +1473,9 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       )}
 
       {editor && (
-        <div className="modal-backdrop" onMouseDown={() => setEditor(null)}>
+        <div className="modal-backdrop" onMouseDown={closeEditor}>
           <form className="node-editor" onSubmit={(event) => { event.preventDefault(); saveEditor(); }} onMouseDown={(event) => event.stopPropagation()}>
-            <div className="editor-head"><div><span>{editor.id ? "Edit node" : "New node"}</span><h2>{editor.id ? "Refine this step" : "Add to the operating map"}</h2></div><button type="button" onClick={() => setEditor(null)}><X size={18} /></button></div>
+            <div className="editor-head"><div><span>{editor.id ? "Edit node" : "New node"}</span><h2>{editor.id ? "Refine this step" : "Add to the operating map"}</h2></div><button type="button" onClick={closeEditor}><X size={18} /></button></div>
             <label>Heading<input autoFocus value={editor.heading} onChange={(event) => setEditor({ ...editor, heading: event.target.value })} placeholder="e.g. Lead qualification" maxLength={90} /></label>
             <label>Description <span>Optional</span><textarea value={editor.description} onChange={(event) => setEditor({ ...editor, description: event.target.value })} placeholder="What happens at this step?" rows={4} maxLength={320} /></label>
             <fieldset className="shape-picker">
@@ -1439,7 +1497,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
                 ))}
               </div>
             </fieldset>
-            <div className="editor-actions"><button type="button" onClick={() => setEditor(null)}>Cancel</button><button type="submit" disabled={!editor.heading.trim()}>{editor.id ? "Save changes" : "Add node"}</button></div>
+            <div className="editor-actions"><button type="button" onClick={closeEditor}>Cancel</button><button type="submit" disabled={!editor.heading.trim()}>{editor.id ? "Save changes" : "Add node"}</button></div>
           </form>
         </div>
       )}

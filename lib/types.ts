@@ -11,12 +11,13 @@ export type MapNodeData = {
   humanBranch?: boolean;
   toolNode?: boolean;
   standaloneNode?: boolean;
-  shape: "box" | "diamond" | "rounded";
-  color: "default" | "blue" | "yellow" | "rose" | "lavender" | "slate";
-  placement: "right" | "below";
+  shape: "box" | "diamond" | "rounded" | "circle";
+  color: "default" | "blue" | "yellow" | "rose" | "lavender" | "slate" | "red" | "green" | "orange" | "cyan" | "indigo";
+  placement: "right" | "below" | "left" | "above" | "top-right" | "bottom-right" | "bottom-left" | "top-left";
   positionLocked?: boolean;
   onAddChild?: (id: string) => void;
   onAddBelow?: (id: string) => void;
+  onAddAtPlacement?: (id: string, placement: MapNodeData["placement"]) => void;
   onToggle?: (id: string) => void;
   uiSelected?: boolean;
   childCount?: number;
@@ -40,9 +41,9 @@ export type StoredNode = {
   human_branch: boolean;
   tool_node: boolean;
   standalone_node: boolean;
-  node_shape: "box" | "diamond" | "rounded";
-  node_color: "default" | "blue" | "yellow" | "rose" | "lavender" | "slate";
-  placement: "right" | "below";
+  node_shape: "box" | "diamond" | "rounded" | "circle";
+  node_color: "default" | "blue" | "yellow" | "rose" | "lavender" | "slate" | "red" | "green" | "orange" | "cyan" | "indigo";
+  placement: "right" | "below" | "left" | "above" | "top-right" | "bottom-right" | "bottom-left" | "top-left";
   position_locked: boolean;
 };
 

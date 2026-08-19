@@ -53,6 +53,46 @@ const CLOUD_MIGRATION_KEY = "opscanvas-cloud-migrated-v1";
 const BRANCH_CLIPBOARD_KEY = "opscanvas-branch-clipboard-v1";
 const X_GAP = 330;
 const Y_GAP = 150;
+const CIRCLE_SIDE_GAP = 74;
+const CIRCLE_SIDE_SPACING = 126;
+const CIRCLE_PLACEMENTS = ["above", "top-right", "right", "bottom-right", "below", "bottom-left", "left", "top-left"] as const;
+const DIAMOND_PLACEMENTS = ["above", "right", "below", "left"] as const;
+const PLACEMENT_LABELS: Record<MapNodeData["placement"], string> = {
+  above: "top",
+  "top-right": "top right",
+  right: "right",
+  "bottom-right": "bottom right",
+  below: "bottom",
+  "bottom-left": "bottom left",
+  left: "left",
+  "top-left": "top left",
+};
+const sidePlacementsForShape = (shape: MapNodeData["shape"]): readonly MapNodeData["placement"][] => {
+  if (shape === "circle") return CIRCLE_PLACEMENTS;
+  if (shape === "diamond") return DIAMOND_PLACEMENTS;
+  return [];
+};
+const PLACEMENT_HANDLES: Record<MapNodeData["placement"], { source: string; target: string }> = {
+  right: { source: "right-source", target: "left-target" },
+  below: { source: "bottom-source", target: "top-target" },
+  left: { source: "left-source", target: "right-target" },
+  above: { source: "top-source", target: "bottom-target" },
+  "top-right": { source: "top-right-source", target: "bottom-left-target" },
+  "bottom-right": { source: "bottom-right-source", target: "top-left-target" },
+  "bottom-left": { source: "bottom-left-source", target: "top-right-target" },
+  "top-left": { source: "top-left-source", target: "bottom-right-target" },
+};
+const CIRCLE_PLACEMENT_VECTORS: Record<typeof CIRCLE_PLACEMENTS[number], { x: number; y: number }> = {
+  above: { x: 0, y: -1 },
+  "top-right": { x: 0.74, y: -0.74 },
+  right: { x: 1, y: 0 },
+  "bottom-right": { x: 0.74, y: 0.74 },
+  below: { x: 0, y: 1 },
+  "bottom-left": { x: -0.74, y: 0.74 },
+  left: { x: -1, y: 0 },
+  "top-left": { x: -0.74, y: -0.74 },
+};
+const hasSideAddControls = (shape: MapNodeData["shape"]) => shape === "circle" || shape === "diamond";
 
 const subscribeToPhoneViewport = (notify: () => void) => {
   const query = window.matchMedia("(max-width: 760px)");
@@ -185,7 +225,8 @@ function fromStoredConnection(item: StoredConnectionRow): StoredMapConnection {
 function mergeLocalVisualState(nextNodes: MapNode[], localNodes: MapNode[] | null): MapNode[] {
   if (!localNodes?.length) return nextNodes;
   const localNodeById = new Map(localNodes.map((node) => [node.id, node]));
-  return nextNodes.map((node) => {
+  const cloudNodeIds = new Set(nextNodes.map((node) => node.id));
+  const mergedNodes = nextNodes.map((node) => {
     const localNode = localNodeById.get(node.id);
     return localNode
       ? {
@@ -205,6 +246,26 @@ function mergeLocalVisualState(nextNodes: MapNode[], localNodes: MapNode[] | nul
       }
       : node;
   });
+  const localOnlyNodes = localNodes
+    .filter((node) => !cloudNodeIds.has(node.id))
+    .map((node) => ({ ...node, selected: false, data: { ...node.data, positionLocked: false } }));
+  return [...mergedNodes, ...localOnlyNodes];
+}
+
+function mergeLocalConnections(cloudConnections: StoredMapConnection[], localConnections: StoredMapConnection[], nodeIds: Set<string>): StoredMapConnection[] {
+  const cloudConnectionIds = new Set(cloudConnections.map((connection) => connection.id));
+  const localOnlyConnections = localConnections.filter((connection) => (
+    !cloudConnectionIds.has(connection.id)
+    && nodeIds.has(connection.source)
+    && nodeIds.has(connection.target)
+  ));
+  return [...cloudConnections, ...localOnlyConnections];
+}
+
+function hasLocalOnlyNodes(cloudNodes: MapNode[], localNodes: MapNode[] | null): boolean {
+  if (!localNodes?.length) return false;
+  const cloudNodeIds = new Set(cloudNodes.map((node) => node.id));
+  return localNodes.some((node) => !cloudNodeIds.has(node.id));
 }
 
 function descendantsOf(nodes: MapNode[], id: string): Set<string> {
@@ -219,7 +280,20 @@ function descendantsOf(nodes: MapNode[], id: string): Set<string> {
   return result;
 }
 
+function estimateNodeWidth(data: MapNodeData): number {
+  if (data.shape === "circle") return 220;
+  if (data.shape === "diamond") {
+    const sizeClass = nodeSizeClass(data);
+    return sizeClass === "is-extra-wide" ? 250 : sizeClass === "is-wide" ? 220 : 190;
+  }
+  if (data.standaloneNode) return 300;
+  if (data.humanBranch) return 280;
+  const sizeClass = nodeSizeClass(data);
+  return sizeClass === "is-extra-wide" ? 310 : sizeClass === "is-wide" ? 270 : 230;
+}
+
 function nodeSizeClass(data: MapNodeData): "" | "is-wide" | "is-extra-wide" {
+  if (data.shape === "circle") return "";
   const headingLength = data.heading.trim().length;
   if (headingLength > 36) return "is-extra-wide";
   if (headingLength > 18) return "is-wide";
@@ -242,6 +316,7 @@ function layoutTree(nodes: MapNode[]): MapNode[] {
   const hidden = new Set<string>();
 
   const estimatedHeight = (node: MapNode) => {
+    if (node.data.shape === "circle") return 220;
     if (node.data.shape !== "diamond") return node.data.description ? 96 : 54;
     const sizeClass = nodeSizeClass(node.data);
     return sizeClass === "is-extra-wide" ? 250 : sizeClass === "is-wide" ? 220 : 190;
@@ -304,6 +379,41 @@ function layoutTree(nodes: MapNode[]): MapNode[] {
     const parentPosition = positions.get(node.id);
     if (!parentPosition || node.data.collapsed) return;
 
+    if (hasSideAddControls(node.data.shape)) {
+      const parentWidth = estimateNodeWidth(node.data);
+      const parentHeight = estimatedHeight(node);
+      const parentCenterX = parentPosition.x + (parentWidth / 2);
+      const parentCenterY = parentPosition.y + (parentHeight / 2);
+      sidePlacementsForShape(node.data.shape).forEach((placement) => {
+        const children = nodes
+          .filter((child) => child.data.parentId === node.id && child.data.placement === placement)
+          .sort((a, b) => a.data.sortOrder - b.data.sortOrder);
+        const radial = CIRCLE_PLACEMENT_VECTORS[placement];
+        const tangent = { x: -radial.y, y: radial.x };
+        children.forEach((child, index) => {
+          const childWidth = estimateNodeWidth(child.data);
+          const childHeight = estimatedHeight(child);
+          const sideDistance = (Math.max(parentWidth, parentHeight) / 2) + CIRCLE_SIDE_GAP + (Math.max(childWidth, childHeight) / 2);
+          const spacing = (
+            placement === "right" || placement === "left"
+              ? childHeight + 38
+              : placement === "above" || placement === "below"
+                ? childWidth + 38
+                : CIRCLE_SIDE_SPACING
+          );
+          const stackOffset = (index - ((children.length - 1) / 2)) * spacing;
+          const centerX = parentCenterX + (radial.x * sideDistance) + (tangent.x * stackOffset);
+          const centerY = parentCenterY + (radial.y * sideDistance) + (tangent.y * stackOffset);
+          positions.set(child.id, {
+            x: centerX - (childWidth / 2),
+            y: centerY - (childHeight / 2),
+          });
+          placeMixedBranches(child);
+        });
+      });
+      return;
+    }
+
     const rightChildren = byParent.get(node.id) ?? [];
     const unplacedRight = rightChildren.filter((child) => !positions.has(child.id));
     const rightStartY = parentPosition.y - ((unplacedRight.length - 1) * Y_GAP) / 2;
@@ -364,10 +474,17 @@ function migrateManualPositions(nodes: MapNode[]): MapNode[] {
 
 function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
   const sizeClass = nodeSizeClass(data);
+  const showSideAddControls = hasSideAddControls(data.shape);
   return (
     <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""} ${data.humanBranch ? "is-human" : ""} ${data.toolNode ? "is-tool" : ""} ${data.standaloneNode ? "is-standalone" : ""}`}>
-      <Handle type="target" position={Position.Left} className="node-handle" isConnectable={false} />
+      <Handle id="left-target" type="target" position={Position.Left} className="node-handle" isConnectable={false} />
+      <Handle id="right-target" type="target" position={Position.Right} className="node-handle target-only" isConnectable={false} />
       <Handle id="top-target" type="target" position={Position.Top} className="node-handle vertical-handle" isConnectable={false} />
+      <Handle id="bottom-target" type="target" position={Position.Bottom} className="node-handle vertical-handle target-only" isConnectable={false} />
+      <Handle id="top-left-target" type="target" position={Position.Top} className="node-handle angle-handle angle-top-left target-only" isConnectable={false} />
+      <Handle id="top-right-target" type="target" position={Position.Top} className="node-handle angle-handle angle-top-right target-only" isConnectable={false} />
+      <Handle id="bottom-left-target" type="target" position={Position.Bottom} className="node-handle angle-handle angle-bottom-left target-only" isConnectable={false} />
+      <Handle id="bottom-right-target" type="target" position={Position.Bottom} className="node-handle angle-handle angle-bottom-right target-only" isConnectable={false} />
       <button
         className="node-collapse nodrag"
         onClick={() => data.onToggle?.(id)}
@@ -406,17 +523,39 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
           {data.description && <p>{data.description}</p>}
         </>
       )}
-      <Handle type="source" position={Position.Right} className="node-handle" isConnectable={false} />
+      <Handle id="right-source" type="source" position={Position.Right} className="node-handle" isConnectable={false} />
+      <Handle id="left-source" type="source" position={Position.Left} className="node-handle target-only" isConnectable={false} />
+      <Handle id="top-source" type="source" position={Position.Top} className="node-handle vertical-handle target-only" isConnectable={false} />
       <Handle id="bottom-source" type="source" position={Position.Bottom} className="node-handle vertical-handle" isConnectable={false} />
+      <Handle id="top-left-source" type="source" position={Position.Top} className="node-handle angle-handle angle-top-left target-only" isConnectable={false} />
+      <Handle id="top-right-source" type="source" position={Position.Top} className="node-handle angle-handle angle-top-right target-only" isConnectable={false} />
+      <Handle id="bottom-left-source" type="source" position={Position.Bottom} className="node-handle angle-handle angle-bottom-left target-only" isConnectable={false} />
+      <Handle id="bottom-right-source" type="source" position={Position.Bottom} className="node-handle angle-handle angle-bottom-right target-only" isConnectable={false} />
       <Handle id="relation-source" type="source" position={Position.Right} className="relation-handle relation-source" title="Drag to connect this node" />
       <Handle id="relation-target" type="target" position={Position.Left} className={`relation-handle relation-target ${data.connectionTargetVisible ? "is-visible" : ""}`} title="Drop to connect to this node" />
-      <button className="add-control add-child nodrag" onClick={() => data.onAddChild?.(id)} aria-label="Add child">
-        <Plus size={16} />
-        <span>Add child</span>
-      </button>
-      <button className="add-control add-sibling nodrag" onClick={() => data.onAddBelow?.(id)} aria-label="Add node below">
-        <Plus size={15} />
-      </button>
+      {showSideAddControls ? (
+        sidePlacementsForShape(data.shape).map((placement) => (
+          <button
+            key={placement}
+            className={`add-control circle-add circle-add-${placement} nodrag`}
+            onClick={() => data.onAddAtPlacement?.(id, placement)}
+            aria-label={`Add child on ${PLACEMENT_LABELS[placement]}`}
+            title={`Add child on ${PLACEMENT_LABELS[placement]}`}
+          >
+            <Plus size={15} />
+          </button>
+        ))
+      ) : (
+        <>
+          <button className="add-control add-child nodrag" onClick={() => data.onAddChild?.(id)} aria-label="Add child">
+            <Plus size={16} />
+            <span>Add child</span>
+          </button>
+          <button className="add-control add-sibling nodrag" onClick={() => data.onAddBelow?.(id)} aria-label="Add node below">
+            <Plus size={15} />
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -562,6 +701,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       childCount: items.filter((candidate) => candidate.data.parentId === node.id).length,
       onAddChild: addChild,
       onAddBelow: addBelow,
+      onAddAtPlacement: addAtPlacement,
       onToggle: toggleCollapsed,
     },
   }));
@@ -623,6 +763,15 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const pendingSort = useRef(0);
   const pendingPlacement = useRef<MapNodeData["placement"]>("right");
 
+  function addAtPlacement(id: string, placement: MapNodeData["placement"]) {
+    const node = nodes.find((item) => item.id === id);
+    if (!node) return;
+    pendingSort.current = nodes.filter((item) => item.data.parentId === id && item.data.placement === placement).length;
+    pendingPlacement.current = placement;
+    setEditor({ id: null, parentId: id, heading: "", description: "", shape: "box", color: "default" });
+    setMenu(null);
+  }
+
   function addBelow(id: string) {
     const node = nodes.find((item) => item.id === id);
     if (!node) return;
@@ -651,6 +800,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     const data = { ...node.data };
     delete data.onAddChild;
     delete data.onAddBelow;
+    delete data.onAddAtPlacement;
     delete data.onToggle;
     delete data.uiSelected;
     delete data.childCount;
@@ -709,6 +859,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       cloudSaveQueue.current = null;
       const error = await saveCloudState(queued.nodes, queued.connections);
       if (error) {
+        localStorage.removeItem(mapCloudMigrationKey);
         cloudSaveQueue.current = queued;
         if (cloudRetryTimer.current) window.clearTimeout(cloudRetryTimer.current);
         cloudRetryTimer.current = window.setTimeout(() => void flushCloudSave(), 1000);
@@ -838,19 +989,33 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       applyLoadedState(fallbackNodes, localConnections, localViewport);
       const error = await saveCloudState(fallbackNodes, localConnections);
       if (!error) localStorage.setItem(mapCloudMigrationKey, "true");
+      else {
+        cloudSnapshotToSkip.current = null;
+        lastPersistedSnapshot.current = null;
+        localStorage.removeItem(mapCloudMigrationKey);
+      }
       return;
     }
 
-    const nextNodes = mergeLocalVisualState(
-      (cloudNodes as StoredNode[]).map(fromStoredNode),
-      localNodes,
+    const storedCloudNodes = (cloudNodes as StoredNode[]).map(fromStoredNode);
+    const hasUnsyncedLocalNodes = hasLocalOnlyNodes(storedCloudNodes, localNodes);
+    const nextNodes = mergeLocalVisualState(storedCloudNodes, localNodes);
+    const nextConnections = mergeLocalConnections(
+      (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection),
+      localConnections,
+      new Set(nextNodes.map((node) => node.id)),
     );
-    const nextConnections = (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection);
     const cloudViewport = mobileViewport || cloudMap.viewport_zoom == null
       ? localViewport
       : { x: cloudMap.viewport_x ?? 0, y: cloudMap.viewport_y ?? 0, zoom: cloudMap.viewport_zoom };
     applyLoadedState(nextNodes, nextConnections, cloudViewport);
-    localStorage.setItem(mapCloudMigrationKey, "true");
+    if (hasUnsyncedLocalNodes) {
+      cloudSnapshotToSkip.current = null;
+      lastPersistedSnapshot.current = null;
+      localStorage.removeItem(mapCloudMigrationKey);
+    } else {
+      localStorage.setItem(mapCloudMigrationKey, "true");
+    }
   });
 
   useEffect(() => {
@@ -882,15 +1047,19 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       supabase.from("business_map_connections").select("*").eq("map_id", mapId),
     ]);
     if (nodeError || connectionError) return;
-    const nextNodes = mergeLocalVisualState(
-      (cloudNodes as StoredNode[]).map(fromStoredNode),
-      localNodes,
+    const storedCloudNodes = (cloudNodes as StoredNode[]).map(fromStoredNode);
+    const hasUnsyncedLocalNodes = hasLocalOnlyNodes(storedCloudNodes, localNodes);
+    const nextNodes = mergeLocalVisualState(storedCloudNodes, localNodes);
+    const localConnections = parseLocalConnections(new Set(nextNodes.map((node) => node.id)));
+    const nextConnections = mergeLocalConnections(
+      (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection),
+      localConnections,
+      new Set(nextNodes.map((node) => node.id)),
     );
-    const nextConnections = (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection);
     const preparedNodes = layoutTree(nextNodes);
     const snapshot = stateSnapshot(preparedNodes, nextConnections);
-    cloudSnapshotToSkip.current = snapshot;
-    lastPersistedSnapshot.current = snapshot;
+    cloudSnapshotToSkip.current = hasUnsyncedLocalNodes ? null : snapshot;
+    lastPersistedSnapshot.current = hasUnsyncedLocalNodes ? null : snapshot;
     latestSnapshot.current = snapshot;
     setNodes(hydrateActions(preparedNodes.map((node) => ({
       ...node,
@@ -948,8 +1117,8 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       id: `edge-${node.data.parentId}-${node.id}`,
       source: node.data.parentId!,
       target: node.id,
-      sourceHandle: node.data.placement === "below" ? "bottom-source" : undefined,
-      targetHandle: node.data.placement === "below" ? "top-target" : undefined,
+      sourceHandle: PLACEMENT_HANDLES[node.data.placement ?? "right"].source,
+      targetHandle: PLACEMENT_HANDLES[node.data.placement ?? "right"].target,
       type: "smoothstep",
       style: { stroke: node.data.aiSolution ? "#0f766e" : "#a9a8a2", strokeWidth: 1.6 },
       markerEnd: { type: MarkerType.ArrowClosed, color: node.data.aiSolution ? "#0f766e" : "#a9a8a2", width: 14, height: 14 },
@@ -1343,9 +1512,9 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           <button
             onClick={(event) => {
               event.stopPropagation();
-              addStandaloneNode();
+              addRoot();
             }}
-            title="Add standalone node"
+            title="Add root node"
           >
             <Plus size={17} />
           </button>
@@ -1530,16 +1699,16 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
             <fieldset className="shape-picker">
               <legend>Shape</legend>
               <div className="shape-options">
-                {(["box", "diamond", "rounded"] as const).map((shape) => (
+                {(["box", "diamond", "rounded", "circle"] as const).map((shape) => (
                   <button type="button" key={shape} aria-pressed={editor.shape === shape} onClick={() => setEditor({ ...editor, shape })}>
                     <i className={`shape-preview preview-${shape}`} />
-                    <span>{shape === "box" ? "Box" : shape === "diamond" ? "Diamond" : "Rounded"}</span>
+                    <span>{shape === "box" ? "Box" : shape === "diamond" ? "Diamond" : shape === "rounded" ? "Rounded" : "Circle"}</span>
                   </button>
                 ))}
               </div>
               <div className="color-picker-head"><span>Node color</span>{editor.color !== "default" && <button type="button" onClick={() => setEditor({ ...editor, color: "default" })}>Clear color</button>}</div>
               <div className="color-picker">
-                {(["blue", "yellow", "rose", "lavender", "slate"] as const).map((color) => (
+                {(["blue", "yellow", "rose", "lavender", "slate", "red", "green", "orange", "cyan", "indigo"] as const).map((color) => (
                   <button type="button" key={color} aria-label={`${color[0].toUpperCase()}${color.slice(1)} node color`} aria-pressed={editor.color === color} onClick={() => setEditor({ ...editor, color })}>
                     <i className={`color-swatch swatch-${color}`} />
                   </button>

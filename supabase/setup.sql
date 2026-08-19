@@ -50,13 +50,13 @@ alter table public.business_map_nodes add column if not exists placement text no
 
 alter table public.business_map_nodes drop constraint if exists business_map_nodes_node_shape_check;
 alter table public.business_map_nodes add constraint business_map_nodes_node_shape_check
-  check (node_shape in ('box', 'diamond', 'rounded'));
+  check (node_shape in ('box', 'diamond', 'rounded', 'circle'));
 alter table public.business_map_nodes drop constraint if exists business_map_nodes_node_color_check;
 alter table public.business_map_nodes add constraint business_map_nodes_node_color_check
-  check (node_color in ('default', 'blue', 'yellow', 'rose', 'lavender', 'slate'));
+  check (node_color in ('default', 'blue', 'yellow', 'rose', 'lavender', 'slate', 'red', 'green', 'orange', 'cyan', 'indigo'));
 alter table public.business_map_nodes drop constraint if exists business_map_nodes_placement_check;
 alter table public.business_map_nodes add constraint business_map_nodes_placement_check
-  check (placement in ('right', 'below'));
+  check (placement in ('right', 'below', 'left', 'above', 'top-right', 'bottom-right', 'bottom-left', 'top-left'));
 
 create index if not exists business_map_nodes_map_id_idx on public.business_map_nodes(map_id);
 create index if not exists business_map_nodes_parent_id_idx on public.business_map_nodes(parent_id);

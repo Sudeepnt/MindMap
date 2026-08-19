@@ -25,6 +25,12 @@ The supplied project URL and publishable key are already in `.env.local`. In the
 
 `supabase/migrations/005_vertical_children.sql`
 
+`supabase/migrations/011_circle_node_shape.sql`
+
+`supabase/migrations/012_circle_node_placements.sql`
+
+`supabase/migrations/013_more_node_colors.sql`
+
 Until the schema is installed, the app automatically saves the full map to local browser storage and displays `Local draft` in the toolbar.
 
 The prototype policies allow publishable-key users to create and edit maps. Add Supabase Auth and owner-scoped RLS before exposing the app as a multi-user product.

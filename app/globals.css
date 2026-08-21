@@ -101,6 +101,7 @@ button { color: inherit; }
 .hierarchy-badge.tone-department { color: #244e63; background: #c8e2ee; }
 .hierarchy-badge.tone-decision { color: #93382e; background: #f4cec3; }
 .hierarchy-badge.tone-handoff { color: #115d70; background: #cce9ef; }
+.hierarchy-badge.tone-database { color: #1f5c4b; background: #cae8df; }
 .hierarchy-badge.tone-ai { color: #0d5f56; background: #bee3df; }
 .hierarchy-badge.tone-automated { color: #744607; background: #efd39e; }
 .hierarchy-badge.tone-tool { color: #51358e; background: #d9d1f1; }
@@ -368,8 +369,8 @@ button { color: inherit; }
 .decision-node-badge { color: #93382e; border: 1px solid rgba(147, 56, 46, .24); background: rgba(255, 244, 240, .82); }
 .handoff-node-badge { color: #115d70; border: 1px solid rgba(17, 93, 112, .24); background: rgba(239, 252, 255, .84); }
 .map-node.shape-diamond .business-node-badge, .map-node.shape-diamond .decision-node-badge, .map-node.shape-diamond .handoff-node-badge { margin-left: auto; margin-right: auto; }
-.human-node-content, .human-ai-node-content, .ai-node-content, .automated-node-content, .department-node-content, .tool-node-content { display: flex; align-items: flex-start; gap: 15px; }
-.tool-node-content { align-items: center; }
+.human-node-content, .human-ai-node-content, .ai-node-content, .automated-node-content, .department-node-content, .tool-node-content, .database-node-content { display: flex; align-items: flex-start; gap: 15px; }
+.tool-node-content, .database-node-content { align-items: center; }
 .human-node-avatar {
   width: 70px;
   height: 70px;
@@ -443,7 +444,19 @@ button { color: inherit; }
   background: #eee9fb;
   box-shadow: inset 0 0 0 4px rgba(255, 255, 255, .34);
 }
-.human-node-copy, .ai-node-copy, .automated-node-copy, .department-node-copy, .tool-node-copy { min-width: 0; flex: 1 1 auto; }
+.database-node-avatar {
+  width: 68px;
+  height: 68px;
+  border: 1px solid rgba(46, 109, 91, .5);
+  border-radius: 18px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: #255749;
+  background: #e7f6ef;
+  box-shadow: inset 0 0 0 4px rgba(255, 255, 255, .34);
+}
+.human-node-copy, .ai-node-copy, .automated-node-copy, .department-node-copy, .tool-node-copy, .database-node-copy { min-width: 0; flex: 1 1 auto; }
 .human-badge, .human-ai-badge {
   display: inline-flex;
   margin-bottom: 7px;
@@ -505,6 +518,18 @@ button { color: inherit; }
   letter-spacing: .09em;
   text-transform: uppercase;
 }
+.database-node-badge {
+  display: inline-flex;
+  margin-bottom: 7px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #255749;
+  background: rgba(238, 252, 245, .88);
+  font-size: 8.5px;
+  font-weight: 900;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
 .map-node.is-ai strong { margin: 0; }
 .map-node.is-ai p { margin-top: 5px; color: #174f49; -webkit-line-clamp: 2; }
 .map-node.is-automated strong { margin: 0; }
@@ -517,6 +542,8 @@ button { color: inherit; }
 .department-mode-note i { width: 3px; height: 3px; border-radius: 50%; display: block; background: currentColor; opacity: .55; }
 .map-node.is-tool strong { margin: 0; }
 .map-node.is-tool p { margin-top: 5px; color: #463772; -webkit-line-clamp: 2; }
+.map-node.is-database strong { margin: 0; }
+.map-node.is-database p { margin-top: 5px; color: #2d5649; -webkit-line-clamp: 2; }
 .map-node.shape-circle .ai-node-content, .map-node.shape-diamond .ai-node-content { align-items: center; flex-direction: column; gap: 8px; }
 .map-node.shape-circle .ai-node-avatar, .map-node.shape-diamond .ai-node-avatar { width: 48px; height: 48px; border-radius: 14px; }
 .map-node.shape-circle .ai-node-copy, .map-node.shape-diamond .ai-node-copy { text-align: center; }
@@ -544,6 +571,7 @@ button { color: inherit; }
 .is-business .node-handle { background: #173f52 !important; }
 .is-decision .node-handle { background: #b84a3b !important; }
 .is-handoff .node-handle { background: #19758a !important; }
+.is-database .node-handle { background: #2e6d5b !important; }
 .is-tool .node-handle { background: #7a62be !important; }
 .is-standalone .node-handle { background: #d49a2f !important; }
 .relation-handle { width: 15px !important; height: 15px !important; top: 50% !important; transform: translateY(-50%) !important; border: 3px solid #fffefa !important; border-radius: 50%; opacity: 0; pointer-events: none !important; background: #17845f !important; box-shadow: 0 0 0 1px #0f684b, 0 3px 8px rgba(15, 104, 75, .24); cursor: crosshair; transition: opacity .15s, transform .15s !important; }

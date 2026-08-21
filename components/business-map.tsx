@@ -30,6 +30,7 @@ import {
   ChevronDown,
   ChevronRight,
   ContactRound,
+  Database,
   Edit3,
   GitFork,
   Hammer,
@@ -104,6 +105,7 @@ function hierarchyBadges(data: MapNodeData): { label: string; tone: string }[] {
     data.departmentNode && { label: "Department", tone: "department" },
     data.decisionNode && { label: "Decision", tone: "decision" },
     data.handoffNode && { label: "Handoff", tone: "handoff" },
+    data.databaseNode && { label: "Database", tone: "database" },
     data.aiSolution && { label: "AI solution", tone: "ai" },
     data.automatedWork && { label: "Automated", tone: "automated" },
     data.toolNode && { label: "Tool", tone: "tool" },
@@ -132,6 +134,7 @@ type SeedOptions = {
   businessNode?: boolean;
   decisionNode?: boolean;
   handoffNode?: boolean;
+  databaseNode?: boolean;
   toolNode?: boolean;
   standaloneNode?: boolean;
   shape?: MapNodeData["shape"];
@@ -210,6 +213,7 @@ function makeNode(
       businessNode: options.businessNode ?? false,
       decisionNode: options.decisionNode ?? false,
       handoffNode: options.handoffNode ?? false,
+      databaseNode: options.databaseNode ?? false,
       toolNode: options.toolNode ?? false,
       standaloneNode: options.standaloneNode ?? false,
       shape: options.shape ?? "box",
@@ -239,6 +243,7 @@ function fromStoredNode(item: StoredNode): MapNode {
       businessNode: item.business_node ?? false,
       decisionNode: item.decision_node ?? false,
       handoffNode: item.handoff_node ?? false,
+      databaseNode: item.database_node ?? false,
       toolNode: item.tool_node ?? false,
       standaloneNode: item.standalone_node ?? false,
       shape: item.node_shape ?? "box",
@@ -492,7 +497,7 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
   const sizeClass = nodeSizeClass(data);
   const showSideAddControls = hasSideAddControls(data.shape);
   return (
-    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""} ${data.humanBranch ? "is-human" : ""} ${data.humanAiMix ? "is-human-ai" : ""} ${data.automatedWork ? "is-automated" : ""} ${data.departmentNode ? "is-department" : ""} ${data.businessNode ? "is-business" : ""} ${data.decisionNode ? "is-decision" : ""} ${data.handoffNode ? "is-handoff" : ""} ${data.toolNode ? "is-tool" : ""} ${data.standaloneNode ? "is-standalone" : ""}`}>
+    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""} ${data.humanBranch ? "is-human" : ""} ${data.humanAiMix ? "is-human-ai" : ""} ${data.automatedWork ? "is-automated" : ""} ${data.departmentNode ? "is-department" : ""} ${data.businessNode ? "is-business" : ""} ${data.decisionNode ? "is-decision" : ""} ${data.handoffNode ? "is-handoff" : ""} ${data.databaseNode ? "is-database" : ""} ${data.toolNode ? "is-tool" : ""} ${data.standaloneNode ? "is-standalone" : ""}`}>
       <Handle id="left-target" type="target" position={Position.Left} className="node-handle" isConnectable={false} />
       <Handle id="right-target" type="target" position={Position.Right} className="node-handle target-only" isConnectable={false} />
       <Handle id="top-target" type="target" position={Position.Top} className="node-handle vertical-handle" isConnectable={false} />
@@ -567,6 +572,17 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
           </span>
           <div className="tool-node-copy">
             <span className="tool-node-badge">Tool node</span>
+            <strong>{data.heading}</strong>
+            {data.description && <p>{data.description}</p>}
+          </div>
+        </div>
+      ) : data.databaseNode ? (
+        <div className="database-node-content">
+          <span className="database-node-avatar" aria-hidden="true">
+            <Database size={28} strokeWidth={1.8} />
+          </span>
+          <div className="database-node-copy">
+            <span className="database-node-badge">Database</span>
             <strong>{data.heading}</strong>
             {data.description && <p>{data.description}</p>}
           </div>
@@ -924,6 +940,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     business_node: node.data.businessNode ?? false,
     decision_node: node.data.decisionNode ?? false,
     handoff_node: node.data.handoffNode ?? false,
+    database_node: node.data.databaseNode ?? false,
     tool_node: node.data.toolNode ?? false,
     standalone_node: node.data.standaloneNode ?? false,
     node_shape: node.data.shape ?? "box",
@@ -1458,7 +1475,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     setMenu(null);
   };
 
-  type MarkerFlag = "aiSolution" | "repeatedWork" | "humanBranch" | "humanAiMix" | "automatedWork" | "departmentNode" | "businessNode" | "decisionNode" | "handoffNode" | "toolNode";
+  type MarkerFlag = "aiSolution" | "repeatedWork" | "humanBranch" | "humanAiMix" | "automatedWork" | "departmentNode" | "businessNode" | "decisionNode" | "handoffNode" | "databaseNode" | "toolNode";
   const markerTargetIds = (id: string) => selectedNodeIds.current.has(id) && selectedNodeIds.current.size > 1
     ? new Set(selectedNodeIds.current)
     : new Set([id]);
@@ -1480,6 +1497,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           businessNode: false,
           decisionNode: false,
           handoffNode: false,
+          databaseNode: false,
           toolNode: false,
           standaloneNode: false,
         },
@@ -1504,6 +1522,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           businessNode: false,
           decisionNode: false,
           handoffNode: false,
+          databaseNode: false,
           toolNode: false,
           standaloneNode: false,
         },
@@ -1527,6 +1546,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           businessNode: false,
           decisionNode: false,
           handoffNode: false,
+          databaseNode: false,
           aiSolution: false,
           repeatedWork: false,
           toolNode: false,
@@ -1554,6 +1574,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           businessNode: false,
           decisionNode: false,
           handoffNode: false,
+          databaseNode: false,
           aiSolution: false,
           repeatedWork: false,
           toolNode: false,
@@ -1579,6 +1600,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           businessNode: false,
           decisionNode: false,
           handoffNode: false,
+          databaseNode: false,
           aiSolution: false,
           repeatedWork: false,
           humanBranch: false,
@@ -1607,6 +1629,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           businessNode: false,
           decisionNode: false,
           handoffNode: false,
+          databaseNode: false,
           aiSolution: false,
           repeatedWork: false,
           humanBranch: false,
@@ -1614,6 +1637,34 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           standaloneNode: false,
           shape: "box",
           color: "lavender",
+        },
+      }
+      : node));
+    setMenu(null);
+  };
+
+  const toggleDatabaseNode = (id: string) => {
+    const targetIds = markerTargetIds(id);
+    const enabled = shouldMarkTargets(targetIds, "databaseNode");
+    commit((current) => current.map((node) => targetIds.has(node.id)
+      ? {
+        ...node,
+        data: {
+          ...node.data,
+          databaseNode: enabled,
+          toolNode: false,
+          automatedWork: false,
+          departmentNode: false,
+          businessNode: false,
+          decisionNode: false,
+          handoffNode: false,
+          aiSolution: false,
+          repeatedWork: false,
+          humanBranch: false,
+          humanAiMix: false,
+          standaloneNode: false,
+          shape: "box",
+          color: "green",
         },
       }
       : node));
@@ -1633,6 +1684,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           businessNode: false,
           decisionNode: false,
           handoffNode: false,
+          databaseNode: false,
           aiSolution: false,
           repeatedWork: false,
           humanBranch: false,
@@ -1658,6 +1710,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           businessNode: enabled,
           decisionNode: false,
           handoffNode: false,
+          databaseNode: false,
           departmentNode: false,
           automatedWork: false,
           aiSolution: false,
@@ -1685,6 +1738,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           decisionNode: enabled,
           businessNode: false,
           handoffNode: false,
+          databaseNode: false,
           departmentNode: false,
           automatedWork: false,
           aiSolution: false,
@@ -1711,6 +1765,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           handoffNode: enabled,
           decisionNode: false,
           businessNode: false,
+          databaseNode: false,
           departmentNode: false,
           automatedWork: false,
           aiSolution: false,
@@ -2144,7 +2199,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           >
             <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} color="#d7d4cb" />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable nodeColor={(node) => node.data.businessNode ? "#173f52" : node.data.decisionNode ? "#b84a3b" : node.data.handoffNode ? "#19758a" : node.data.aiSolution ? "#0f766e" : node.data.automatedWork ? "#b97820" : node.data.departmentNode ? "#315f78" : "#d7d3c8"} maskColor="rgba(247, 246, 241, .78)" />
+            <MiniMap pannable zoomable nodeColor={(node) => node.data.businessNode ? "#173f52" : node.data.decisionNode ? "#b84a3b" : node.data.handoffNode ? "#19758a" : node.data.databaseNode ? "#2e6d5b" : node.data.aiSolution ? "#0f766e" : node.data.automatedWork ? "#b97820" : node.data.departmentNode ? "#315f78" : "#d7d3c8"} maskColor="rgba(247, 246, 241, .78)" />
           </ReactFlow>
           {phoneViewport && loaded && (
             <button
@@ -2172,6 +2227,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           <button onClick={() => toggleBusinessNode(menu.id)}><BriefcaseBusiness size={15} />{allMenuTargetsMarked("businessNode") ? "Remove business" : "Mark as business"}</button>
           <button onClick={() => toggleDecisionNode(menu.id)}><GitFork size={15} />{allMenuTargetsMarked("decisionNode") ? "Remove decision" : "Mark as decision"}</button>
           <button onClick={() => toggleHandoffNode(menu.id)}><ArrowRightLeft size={15} />{allMenuTargetsMarked("handoffNode") ? "Remove handoff" : "Mark as handoff"}</button>
+          <button onClick={() => toggleDatabaseNode(menu.id)}><Database size={15} />{allMenuTargetsMarked("databaseNode") ? "Remove database" : "Mark as database"}</button>
           <button onClick={() => toggleRepeatedWork(menu.id)}><Redo2 size={15} />{allMenuTargetsMarked("repeatedWork") ? "Remove repeated work" : "Mark as most repeated work"}</button>
           <button onClick={() => toggleHumanBranch(menu.id)}><ContactRound size={15} />{allMenuTargetsMarked("humanBranch") ? "Remove human-only task" : "Mark as human-only task"}</button>
           <button onClick={() => toggleHumanAiMix(menu.id)}><span className="menu-mode-icon"><ContactRound size={14} /><Sparkles size={10} /></span>{allMenuTargetsMarked("humanAiMix") ? "Remove Human + AI" : "Mark as Human + AI"}</button>

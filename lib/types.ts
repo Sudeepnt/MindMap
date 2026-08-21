@@ -10,6 +10,11 @@ export type MapNodeData = {
   repeatedWork: boolean;
   humanBranch?: boolean;
   humanAiMix?: boolean;
+  automatedWork?: boolean;
+  departmentNode?: boolean;
+  businessNode?: boolean;
+  decisionNode?: boolean;
+  handoffNode?: boolean;
   toolNode?: boolean;
   standaloneNode?: boolean;
   shape: "box" | "diamond" | "rounded" | "circle";
@@ -41,6 +46,11 @@ export type StoredNode = {
   repeated_work: boolean;
   human_branch: boolean;
   human_ai_mix: boolean;
+  automated_work: boolean;
+  department_node: boolean;
+  business_node: boolean;
+  decision_node: boolean;
+  handoff_node: boolean;
   tool_node: boolean;
   standalone_node: boolean;
   node_shape: "box" | "diamond" | "rounded" | "circle";

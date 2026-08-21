@@ -28,6 +28,11 @@ create table if not exists public.business_map_nodes (
   repeated_work boolean not null default false,
   human_branch boolean not null default false,
   human_ai_mix boolean not null default false,
+  automated_work boolean not null default false,
+  department_node boolean not null default false,
+  business_node boolean not null default false,
+  decision_node boolean not null default false,
+  handoff_node boolean not null default false,
   tool_node boolean not null default false,
   standalone_node boolean not null default false,
   node_shape text not null default 'box',
@@ -44,6 +49,11 @@ alter table public.business_maps add column if not exists viewport_zoom real;
 alter table public.business_map_nodes add column if not exists repeated_work boolean not null default false;
 alter table public.business_map_nodes add column if not exists human_branch boolean not null default false;
 alter table public.business_map_nodes add column if not exists human_ai_mix boolean not null default false;
+alter table public.business_map_nodes add column if not exists automated_work boolean not null default false;
+alter table public.business_map_nodes add column if not exists department_node boolean not null default false;
+alter table public.business_map_nodes add column if not exists business_node boolean not null default false;
+alter table public.business_map_nodes add column if not exists decision_node boolean not null default false;
+alter table public.business_map_nodes add column if not exists handoff_node boolean not null default false;
 alter table public.business_map_nodes add column if not exists tool_node boolean not null default false;
 alter table public.business_map_nodes add column if not exists standalone_node boolean not null default false;
 alter table public.business_map_nodes add column if not exists node_shape text not null default 'box';
@@ -103,17 +113,17 @@ as $$
 begin
   insert into public.business_map_nodes (
     id, map_id, parent_id, heading, description, sort_order, position_x,
-    position_y, collapsed, ai_solution, repeated_work, human_branch, human_ai_mix, tool_node, standalone_node, node_shape,
+    position_y, collapsed, ai_solution, repeated_work, human_branch, human_ai_mix, automated_work, department_node, business_node, decision_node, handoff_node, tool_node, standalone_node, node_shape,
     node_color, placement, updated_at
   )
   select
     node.id, p_map_id, null, node.heading, node.description, node.sort_order,
     node.position_x, node.position_y, node.collapsed, node.ai_solution,
-    node.repeated_work, node.human_branch, node.human_ai_mix, node.tool_node, node.standalone_node, node.node_shape, node.node_color, node.placement, now()
+    node.repeated_work, node.human_branch, node.human_ai_mix, node.automated_work, node.department_node, node.business_node, node.decision_node, node.handoff_node, node.tool_node, node.standalone_node, node.node_shape, node.node_color, node.placement, now()
   from jsonb_to_recordset(p_nodes) as node(
     id text, parent_id text, heading text, description text, sort_order integer,
     position_x real, position_y real, collapsed boolean, ai_solution boolean,
-    repeated_work boolean, human_branch boolean, human_ai_mix boolean, tool_node boolean, standalone_node boolean, node_shape text, node_color text, placement text
+    repeated_work boolean, human_branch boolean, human_ai_mix boolean, automated_work boolean, department_node boolean, business_node boolean, decision_node boolean, handoff_node boolean, tool_node boolean, standalone_node boolean, node_shape text, node_color text, placement text
   )
   on conflict (id) do update set
     heading = excluded.heading,
@@ -126,6 +136,11 @@ begin
     repeated_work = excluded.repeated_work,
     human_branch = excluded.human_branch,
     human_ai_mix = excluded.human_ai_mix,
+    automated_work = excluded.automated_work,
+    department_node = excluded.department_node,
+    business_node = excluded.business_node,
+    decision_node = excluded.decision_node,
+    handoff_node = excluded.handoff_node,
     tool_node = excluded.tool_node,
     standalone_node = excluded.standalone_node,
     node_shape = excluded.node_shape,
@@ -217,13 +232,13 @@ begin
 
   insert into public.business_map_nodes (
     id, map_id, parent_id, heading, description, sort_order, position_x,
-    position_y, collapsed, ai_solution, repeated_work, human_branch, human_ai_mix, tool_node,
+    position_y, collapsed, ai_solution, repeated_work, human_branch, human_ai_mix, automated_work, department_node, business_node, decision_node, handoff_node, tool_node,
     standalone_node, node_shape, node_color, placement, position_locked, updated_at
   )
   select
     id_map ->> source.id, p_target_map_id, null, source.heading, source.description,
     source.sort_order, source.position_x + offset_x, source.position_y + offset_y,
-    source.collapsed, source.ai_solution, source.repeated_work, source.human_branch, source.human_ai_mix,
+    source.collapsed, source.ai_solution, source.repeated_work, source.human_branch, source.human_ai_mix, source.automated_work, source.department_node, source.business_node, source.decision_node, source.handoff_node,
     source.tool_node, source.standalone_node, source.node_shape, source.node_color,
     source.placement, true, now()
   from public.business_map_nodes source

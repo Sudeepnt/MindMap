@@ -23,25 +23,29 @@ import {
 } from "@xyflow/react";
 import {
   ArrowLeft,
+  ArrowRightLeft,
   Bot,
+  BriefcaseBusiness,
+  Building2,
   ChevronDown,
   ChevronRight,
-  ClipboardCopy,
-  ClipboardPaste,
   ContactRound,
-  Copy,
   Edit3,
+  GitFork,
   Hammer,
   Network,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Redo2,
+  ServerCog,
   Sparkles,
   Trash2,
   Undo2,
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase";
 import type { MapNode, MapNodeData, StoredConnection as StoredConnectionRow, StoredNode } from "@/lib/types";
 
@@ -94,6 +98,21 @@ const CIRCLE_PLACEMENT_VECTORS: Record<typeof CIRCLE_PLACEMENTS[number], { x: nu
 };
 const hasSideAddControls = (shape: MapNodeData["shape"]) => shape === "circle" || shape === "diamond";
 
+function hierarchyBadges(data: MapNodeData): { label: string; tone: string }[] {
+  return [
+    data.businessNode && { label: "Business", tone: "business" },
+    data.departmentNode && { label: "Department", tone: "department" },
+    data.decisionNode && { label: "Decision", tone: "decision" },
+    data.handoffNode && { label: "Handoff", tone: "handoff" },
+    data.aiSolution && { label: "AI solution", tone: "ai" },
+    data.automatedWork && { label: "Automated", tone: "automated" },
+    data.toolNode && { label: "Tool", tone: "tool" },
+    data.humanAiMix && { label: "Human + AI", tone: "human-ai" },
+    data.humanBranch && { label: "Human", tone: "human" },
+    data.repeatedWork && { label: "Repeated", tone: "repeated" },
+  ].filter((badge): badge is { label: string; tone: string } => Boolean(badge));
+}
+
 const subscribeToPhoneViewport = (notify: () => void) => {
   const query = window.matchMedia("(max-width: 760px)");
   query.addEventListener("change", notify);
@@ -108,6 +127,11 @@ type SeedOptions = {
   repeatedWork?: boolean;
   humanBranch?: boolean;
   humanAiMix?: boolean;
+  automatedWork?: boolean;
+  departmentNode?: boolean;
+  businessNode?: boolean;
+  decisionNode?: boolean;
+  handoffNode?: boolean;
   toolNode?: boolean;
   standaloneNode?: boolean;
   shape?: MapNodeData["shape"];
@@ -116,7 +140,7 @@ type SeedOptions = {
 };
 
 const seedNodes: MapNode[] = [
-  makeNode("company", null, "Digital Marketing Agency", "Business operating model", 0),
+  makeNode("company", null, "Digital Marketing Agency", "Business operating model", 0, { businessNode: true }),
   makeNode("departments", "company", "Departments", "Core functions of the business", 0, { color: "rose" }),
   makeNode("sales", "departments", "INTERNAL - SALES & BUSINESS DEVELOPMENT", "Turn qualified demand into clients", 0, { color: "blue" }),
   makeNode("operations", "departments", "Operations", "Deliver work consistently", 2),
@@ -181,6 +205,11 @@ function makeNode(
       repeatedWork: options.repeatedWork ?? false,
       humanBranch: options.humanBranch ?? false,
       humanAiMix: options.humanAiMix ?? false,
+      automatedWork: options.automatedWork ?? false,
+      departmentNode: options.departmentNode ?? false,
+      businessNode: options.businessNode ?? false,
+      decisionNode: options.decisionNode ?? false,
+      handoffNode: options.handoffNode ?? false,
       toolNode: options.toolNode ?? false,
       standaloneNode: options.standaloneNode ?? false,
       shape: options.shape ?? "box",
@@ -205,6 +234,11 @@ function fromStoredNode(item: StoredNode): MapNode {
       repeatedWork: item.repeated_work ?? false,
       humanBranch: item.human_branch ?? false,
       humanAiMix: item.human_ai_mix ?? false,
+      automatedWork: item.automated_work ?? false,
+      departmentNode: item.department_node ?? false,
+      businessNode: item.business_node ?? false,
+      decisionNode: item.decision_node ?? false,
+      handoffNode: item.handoff_node ?? false,
       toolNode: item.tool_node ?? false,
       standaloneNode: item.standalone_node ?? false,
       shape: item.node_shape ?? "box",
@@ -223,53 +257,6 @@ function fromStoredConnection(item: StoredConnectionRow): StoredMapConnection {
     sourceHandle: item.source_handle,
     targetHandle: item.target_handle,
   };
-}
-
-function mergeLocalVisualState(nextNodes: MapNode[], localNodes: MapNode[] | null): MapNode[] {
-  if (!localNodes?.length) return nextNodes;
-  const localNodeById = new Map(localNodes.map((node) => [node.id, node]));
-  const cloudNodeIds = new Set(nextNodes.map((node) => node.id));
-  const mergedNodes = nextNodes.map((node) => {
-    const localNode = localNodeById.get(node.id);
-    return localNode
-      ? {
-        ...node,
-        position: localNode.data.positionLocked ? localNode.position : node.position,
-        data: {
-          ...node.data,
-          aiSolution: Boolean(localNode.data.aiSolution),
-          repeatedWork: Boolean(localNode.data.repeatedWork),
-          humanBranch: Boolean(localNode.data.humanBranch),
-          humanAiMix: Boolean(localNode.data.humanAiMix),
-          toolNode: Boolean(localNode.data.toolNode),
-          standaloneNode: Boolean(localNode.data.standaloneNode),
-          shape: localNode.data.shape ?? node.data.shape,
-          color: localNode.data.color ?? node.data.color,
-          positionLocked: Boolean(localNode.data.positionLocked),
-        },
-      }
-      : node;
-  });
-  const localOnlyNodes = localNodes
-    .filter((node) => !cloudNodeIds.has(node.id))
-    .map((node) => ({ ...node, selected: false, data: { ...node.data, positionLocked: false } }));
-  return [...mergedNodes, ...localOnlyNodes];
-}
-
-function mergeLocalConnections(cloudConnections: StoredMapConnection[], localConnections: StoredMapConnection[], nodeIds: Set<string>): StoredMapConnection[] {
-  const cloudConnectionIds = new Set(cloudConnections.map((connection) => connection.id));
-  const localOnlyConnections = localConnections.filter((connection) => (
-    !cloudConnectionIds.has(connection.id)
-    && nodeIds.has(connection.source)
-    && nodeIds.has(connection.target)
-  ));
-  return [...cloudConnections, ...localOnlyConnections];
-}
-
-function hasLocalOnlyNodes(cloudNodes: MapNode[], localNodes: MapNode[] | null): boolean {
-  if (!localNodes?.length) return false;
-  const cloudNodeIds = new Set(cloudNodes.map((node) => node.id));
-  return localNodes.some((node) => !cloudNodeIds.has(node.id));
 }
 
 function descendantsOf(nodes: MapNode[], id: string): Set<string> {
@@ -291,6 +278,9 @@ function estimateNodeWidth(data: MapNodeData): number {
     return sizeClass === "is-extra-wide" ? 250 : sizeClass === "is-wide" ? 220 : 190;
   }
   if (data.aiSolution) return 310;
+  if (data.automatedWork) return 310;
+  if (data.departmentNode) return 320;
+  if (data.businessNode) return 330;
   if (data.toolNode) return 310;
   if (data.standaloneNode) return 300;
   if (data.humanBranch) return 320;
@@ -325,7 +315,10 @@ function layoutTree(nodes: MapNode[]): MapNode[] {
   const estimatedHeight = (node: MapNode) => {
     if (node.data.shape === "circle") return 220;
     if (node.data.aiSolution && node.data.shape !== "diamond") return 138;
-    if (node.data.toolNode && node.data.shape !== "diamond") return 138;
+    if (node.data.automatedWork && node.data.shape !== "diamond") return 138;
+    if (node.data.departmentNode && node.data.shape !== "diamond") return 118;
+    if (node.data.businessNode && node.data.shape !== "diamond") return 126;
+    if (node.data.toolNode && node.data.shape !== "diamond") return 92;
     if (node.data.humanBranch) return 166;
     if (node.data.humanAiMix) return 138;
     if (node.data.shape !== "diamond") return node.data.description ? 96 : 54;
@@ -499,7 +492,7 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
   const sizeClass = nodeSizeClass(data);
   const showSideAddControls = hasSideAddControls(data.shape);
   return (
-    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""} ${data.humanBranch ? "is-human" : ""} ${data.humanAiMix ? "is-human-ai" : ""} ${data.toolNode ? "is-tool" : ""} ${data.standaloneNode ? "is-standalone" : ""}`}>
+    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""} ${data.humanBranch ? "is-human" : ""} ${data.humanAiMix ? "is-human-ai" : ""} ${data.automatedWork ? "is-automated" : ""} ${data.departmentNode ? "is-department" : ""} ${data.businessNode ? "is-business" : ""} ${data.decisionNode ? "is-decision" : ""} ${data.handoffNode ? "is-handoff" : ""} ${data.toolNode ? "is-tool" : ""} ${data.standaloneNode ? "is-standalone" : ""}`}>
       <Handle id="left-target" type="target" position={Position.Left} className="node-handle" isConnectable={false} />
       <Handle id="right-target" type="target" position={Position.Right} className="node-handle target-only" isConnectable={false} />
       <Handle id="top-target" type="target" position={Position.Top} className="node-handle vertical-handle" isConnectable={false} />
@@ -517,6 +510,15 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
         {data.collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
         {data.collapsed && <span>{data.childCount}</span>}
       </button>
+      {data.businessNode && (
+        <span className="business-node-badge"><BriefcaseBusiness size={12} /> Business</span>
+      )}
+      {data.decisionNode && (
+        <span className="decision-node-badge"><GitFork size={12} /> Decision</span>
+      )}
+      {data.handoffNode && (
+        <span className="handoff-node-badge"><ArrowRightLeft size={12} /> Handoff</span>
+      )}
       {data.repeatedWork && (
         <span className="repeated-badge"><Redo2 size={11} /> Most repeated work</span>
       )}
@@ -532,6 +534,30 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
             <span className="ai-solution-badge">AI solution</span>
             <strong>{data.heading}</strong>
             {data.description && <p>{data.description}</p>}
+          </div>
+        </div>
+      ) : data.automatedWork ? (
+        <div className="automated-node-content">
+          <span className="automated-node-avatar" aria-hidden="true">
+            <ServerCog size={29} strokeWidth={1.8} />
+          </span>
+          <div className="automated-node-copy">
+            <span className="automated-node-badge">Automated work</span>
+            <strong>{data.heading}</strong>
+            {data.description && <p>{data.description}</p>}
+            <span className="automation-mode-note">Server / cron <i /> No AI</span>
+          </div>
+        </div>
+      ) : data.departmentNode ? (
+        <div className="department-node-content">
+          <span className="department-node-avatar" aria-hidden="true">
+            <Building2 size={29} strokeWidth={1.8} />
+          </span>
+          <div className="department-node-copy">
+            <span className="department-node-badge">Department</span>
+            <strong>{data.heading}</strong>
+            {data.description && <p>{data.description}</p>}
+            <span className="department-mode-note">Team <i /> Function</span>
           </div>
         </div>
       ) : data.toolNode ? (
@@ -685,6 +711,8 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [branchClipboard, setBranchClipboard] = useState<BranchClipboard>(() => readBranchClipboard());
   const [selectedCount, setSelectedCount] = useState(0);
+  const [hierarchyPanelOpen, setHierarchyPanelOpen] = useState(true);
+  const [hierarchyNodeOverrides, setHierarchyNodeOverrides] = useState<Record<string, boolean>>({});
   const [clipboardMessage, setClipboardMessage] = useState<string | null>(null);
   const [cloudSaveStatus, setCloudSaveStatus] = useState<"loading" | "saving" | "saved" | "local">("loading");
   const [connections, setConnections] = useState<StoredMapConnection[]>([]);
@@ -824,15 +852,6 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     });
   });
 
-  const getStandalonePosition = () => {
-    if (!flowInstance.current || !canvasWrapRef.current) return null;
-    const bounds = canvasWrapRef.current.getBoundingClientRect();
-    return flowInstance.current.screenToFlowPosition({
-      x: bounds.left + (bounds.width / 2) - 140,
-      y: bounds.top + (bounds.height / 2) - 48,
-    });
-  };
-
   function addChild(parentId: string) {
     const siblings = nodes.filter((node) => node.data.parentId === parentId);
     setEditor({ id: null, parentId, heading: "", description: "", shape: "box", color: "default" });
@@ -860,15 +879,6 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     pendingSort.current = nodes.filter((item) => item.data.parentId === id && item.data.placement === "below").length;
     pendingPlacement.current = "below";
     setEditor({ id: null, parentId: id, heading: "", description: "", shape: "box", color: "default" });
-    setMenu(null);
-  }
-
-  function addStandaloneNode() {
-    pendingSort.current = nodes.filter((node) => node.data.parentId === null).length;
-    pendingPlacement.current = "right";
-    pendingStandalonePosition.current = getStandalonePosition();
-    pendingStandaloneNode.current = true;
-    setEditor({ id: null, parentId: null, heading: "", description: "", shape: "box", color: "default" });
     setMenu(null);
   }
 
@@ -909,6 +919,11 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     repeated_work: node.data.repeatedWork ?? false,
     human_branch: node.data.humanBranch ?? false,
     human_ai_mix: node.data.humanAiMix ?? false,
+    automated_work: node.data.automatedWork ?? false,
+    department_node: node.data.departmentNode ?? false,
+    business_node: node.data.businessNode ?? false,
+    decision_node: node.data.decisionNode ?? false,
+    handoff_node: node.data.handoffNode ?? false,
     tool_node: node.data.toolNode ?? false,
     standalone_node: node.data.standaloneNode ?? false,
     node_shape: node.data.shape ?? "box",
@@ -969,10 +984,12 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       }
       cloudRetryAttempt.current = 0;
       lastPersistedSnapshot.current = stateSnapshot(queued.nodes, queued.connections);
-      localStorage.setItem(mapCloudMigrationKey, "true");
     }
     cloudSaveRunning.current = false;
-    if (!cloudSaveQueue.current) setCloudSaveStatus("saved");
+    if (!cloudSaveQueue.current) {
+      localStorage.setItem(mapCloudMigrationKey, "true");
+      setCloudSaveStatus("saved");
+    }
   };
 
   const queueSave = useEffectEvent((currentNodes: MapNode[], currentConnections: StoredMapConnection[]) => {
@@ -989,6 +1006,8 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       setCloudSaveStatus("saved");
       return;
     }
+    // From this point until the RPC succeeds, localStorage is the recovery copy.
+    localStorage.removeItem(mapCloudMigrationKey);
     setCloudSaveStatus("saving");
     cloudSaveQueue.current = { nodes: cleanNodes, connections: currentConnections };
     void flushCloudSave();
@@ -1119,27 +1138,14 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       return;
     }
 
-    const storedCloudNodes = (cloudNodes as StoredNode[]).map(fromStoredNode);
-    const hasUnsyncedLocalNodes = hasLocalOnlyNodes(storedCloudNodes, localNodes);
-    const nextNodes = mergeLocalVisualState(storedCloudNodes, localNodes);
-    const nextConnections = mergeLocalConnections(
-      (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection),
-      localConnections,
-      new Set(nextNodes.map((node) => node.id)),
-    );
+    const nextNodes = (cloudNodes as StoredNode[]).map(fromStoredNode);
+    const nextConnections = (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection);
     const cloudViewport = mobileViewport || cloudMap.viewport_zoom == null
       ? localViewport
       : { x: cloudMap.viewport_x ?? 0, y: cloudMap.viewport_y ?? 0, zoom: cloudMap.viewport_zoom };
     applyLoadedState(nextNodes, nextConnections, cloudViewport);
-    if (hasUnsyncedLocalNodes) {
-      cloudSnapshotToSkip.current = null;
-      lastPersistedSnapshot.current = null;
-      localStorage.removeItem(mapCloudMigrationKey);
-      setCloudSaveStatus("saving");
-    } else {
-      localStorage.setItem(mapCloudMigrationKey, "true");
-      setCloudSaveStatus("saved");
-    }
+    localStorage.setItem(mapCloudMigrationKey, "true");
+    setCloudSaveStatus("saved");
   });
 
   useEffect(() => {
@@ -1174,26 +1180,18 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const refreshFromCloud = useEffectEvent(async () => {
     if (!loaded || cloudSaveRunning.current || cloudSaveQueue.current) return;
     if (latestSnapshot.current && latestSnapshot.current !== lastPersistedSnapshot.current) return;
-    const localNodes = parseLocalNodes();
     const supabase = createClient();
     const [{ data: cloudNodes, error: nodeError }, { data: cloudConnections, error: connectionError }] = await Promise.all([
       supabase.from("business_map_nodes").select("*").eq("map_id", mapId).order("sort_order"),
       supabase.from("business_map_connections").select("*").eq("map_id", mapId),
     ]);
     if (nodeError || connectionError) return;
-    const storedCloudNodes = (cloudNodes as StoredNode[]).map(fromStoredNode);
-    const hasUnsyncedLocalNodes = hasLocalOnlyNodes(storedCloudNodes, localNodes);
-    const nextNodes = mergeLocalVisualState(storedCloudNodes, localNodes);
-    const localConnections = parseLocalConnections(new Set(nextNodes.map((node) => node.id)));
-    const nextConnections = mergeLocalConnections(
-      (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection),
-      localConnections,
-      new Set(nextNodes.map((node) => node.id)),
-    );
+    const nextNodes = (cloudNodes as StoredNode[]).map(fromStoredNode);
+    const nextConnections = (cloudConnections as StoredConnectionRow[]).map(fromStoredConnection);
     const preparedNodes = layoutTree(nextNodes);
     const snapshot = stateSnapshot(preparedNodes, nextConnections);
-    cloudSnapshotToSkip.current = hasUnsyncedLocalNodes ? null : snapshot;
-    lastPersistedSnapshot.current = hasUnsyncedLocalNodes ? null : snapshot;
+    cloudSnapshotToSkip.current = snapshot;
+    lastPersistedSnapshot.current = snapshot;
     latestSnapshot.current = snapshot;
     setNodes(hydrateActions(preparedNodes.map((node) => ({
       ...node,
@@ -1376,6 +1374,11 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       repeatedWork: source.data.repeatedWork,
       humanBranch: source.data.humanBranch,
       humanAiMix: source.data.humanAiMix,
+      automatedWork: source.data.automatedWork,
+      departmentNode: source.data.departmentNode,
+      businessNode: source.data.businessNode,
+      decisionNode: source.data.decisionNode,
+      handoffNode: source.data.handoffNode,
       toolNode: source.data.toolNode,
       standaloneNode: source.data.standaloneNode,
       shape: source.data.shape,
@@ -1455,15 +1458,28 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     setMenu(null);
   };
 
+  type MarkerFlag = "aiSolution" | "repeatedWork" | "humanBranch" | "humanAiMix" | "automatedWork" | "departmentNode" | "businessNode" | "decisionNode" | "handoffNode" | "toolNode";
+  const markerTargetIds = (id: string) => selectedNodeIds.current.has(id) && selectedNodeIds.current.size > 1
+    ? new Set(selectedNodeIds.current)
+    : new Set([id]);
+  const shouldMarkTargets = (ids: Set<string>, flag: MarkerFlag) => nodes.some((node) => ids.has(node.id) && !node.data[flag]);
+
   const toggleAi = (id: string) => {
-    commit((current) => current.map((node) => node.id === id
+    const targetIds = markerTargetIds(id);
+    const enabled = shouldMarkTargets(targetIds, "aiSolution");
+    commit((current) => current.map((node) => targetIds.has(node.id)
       ? {
         ...node,
         data: {
           ...node.data,
-          aiSolution: !node.data.aiSolution,
+          aiSolution: enabled,
           humanBranch: false,
           humanAiMix: false,
+          automatedWork: false,
+          departmentNode: false,
+          businessNode: false,
+          decisionNode: false,
+          handoffNode: false,
           toolNode: false,
           standaloneNode: false,
         },
@@ -1473,14 +1489,21 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   };
 
   const toggleRepeatedWork = (id: string) => {
-    commit((current) => current.map((node) => node.id === id
+    const targetIds = markerTargetIds(id);
+    const enabled = shouldMarkTargets(targetIds, "repeatedWork");
+    commit((current) => current.map((node) => targetIds.has(node.id)
       ? {
         ...node,
         data: {
           ...node.data,
-          repeatedWork: !node.data.repeatedWork,
+          repeatedWork: enabled,
           humanBranch: false,
           humanAiMix: false,
+          automatedWork: false,
+          departmentNode: false,
+          businessNode: false,
+          decisionNode: false,
+          handoffNode: false,
           toolNode: false,
           standaloneNode: false,
         },
@@ -1490,13 +1513,20 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   };
 
   const toggleHumanBranch = (id: string) => {
-    commit((current) => current.map((node) => node.id === id
+    const targetIds = markerTargetIds(id);
+    const enabled = shouldMarkTargets(targetIds, "humanBranch");
+    commit((current) => current.map((node) => targetIds.has(node.id)
       ? {
         ...node,
         data: {
           ...node.data,
-          humanBranch: !node.data.humanBranch,
+          humanBranch: enabled,
           humanAiMix: false,
+          automatedWork: false,
+          departmentNode: false,
+          businessNode: false,
+          decisionNode: false,
+          handoffNode: false,
           aiSolution: false,
           repeatedWork: false,
           toolNode: false,
@@ -1510,13 +1540,20 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   };
 
   const toggleHumanAiMix = (id: string) => {
-    commit((current) => current.map((node) => node.id === id
+    const targetIds = markerTargetIds(id);
+    const enabled = shouldMarkTargets(targetIds, "humanAiMix");
+    commit((current) => current.map((node) => targetIds.has(node.id)
       ? {
         ...node,
         data: {
           ...node.data,
-          humanAiMix: !node.data.humanAiMix,
+          humanAiMix: enabled,
           humanBranch: false,
+          automatedWork: false,
+          departmentNode: false,
+          businessNode: false,
+          decisionNode: false,
+          handoffNode: false,
           aiSolution: false,
           repeatedWork: false,
           toolNode: false,
@@ -1529,13 +1566,47 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     setMenu(null);
   };
 
-  const toggleToolNode = (id: string) => {
-    commit((current) => current.map((node) => node.id === id
+  const toggleAutomatedWork = (id: string) => {
+    const targetIds = markerTargetIds(id);
+    const enabled = shouldMarkTargets(targetIds, "automatedWork");
+    commit((current) => current.map((node) => targetIds.has(node.id)
       ? {
         ...node,
         data: {
           ...node.data,
-          toolNode: !node.data.toolNode,
+          automatedWork: enabled,
+          departmentNode: false,
+          businessNode: false,
+          decisionNode: false,
+          handoffNode: false,
+          aiSolution: false,
+          repeatedWork: false,
+          humanBranch: false,
+          humanAiMix: false,
+          toolNode: false,
+          standaloneNode: false,
+          shape: "box",
+          color: "orange",
+        },
+      }
+      : node));
+    setMenu(null);
+  };
+
+  const toggleToolNode = (id: string) => {
+    const targetIds = markerTargetIds(id);
+    const enabled = shouldMarkTargets(targetIds, "toolNode");
+    commit((current) => current.map((node) => targetIds.has(node.id)
+      ? {
+        ...node,
+        data: {
+          ...node.data,
+          toolNode: enabled,
+          automatedWork: false,
+          departmentNode: false,
+          businessNode: false,
+          decisionNode: false,
+          handoffNode: false,
           aiSolution: false,
           repeatedWork: false,
           humanBranch: false,
@@ -1543,6 +1614,112 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           standaloneNode: false,
           shape: "box",
           color: "lavender",
+        },
+      }
+      : node));
+    setMenu(null);
+  };
+
+  const toggleDepartmentNode = (id: string) => {
+    const targetIds = markerTargetIds(id);
+    const enabled = shouldMarkTargets(targetIds, "departmentNode");
+    commit((current) => current.map((node) => targetIds.has(node.id)
+      ? {
+        ...node,
+        data: {
+          ...node.data,
+          departmentNode: enabled,
+          automatedWork: false,
+          businessNode: false,
+          decisionNode: false,
+          handoffNode: false,
+          aiSolution: false,
+          repeatedWork: false,
+          humanBranch: false,
+          humanAiMix: false,
+          toolNode: false,
+          standaloneNode: false,
+          shape: "box",
+          color: "blue",
+        },
+      }
+      : node));
+    setMenu(null);
+  };
+
+  const toggleBusinessNode = (id: string) => {
+    const targetIds = markerTargetIds(id);
+    const enabled = shouldMarkTargets(targetIds, "businessNode");
+    commit((current) => current.map((node) => targetIds.has(node.id)
+      ? {
+        ...node,
+        data: {
+          ...node.data,
+          businessNode: enabled,
+          decisionNode: false,
+          handoffNode: false,
+          departmentNode: false,
+          automatedWork: false,
+          aiSolution: false,
+          repeatedWork: false,
+          humanBranch: false,
+          humanAiMix: false,
+          toolNode: false,
+          standaloneNode: false,
+          shape: "rounded",
+          color: "yellow",
+        },
+      }
+      : node));
+    setMenu(null);
+  };
+
+  const toggleDecisionNode = (id: string) => {
+    const targetIds = markerTargetIds(id);
+    const enabled = shouldMarkTargets(targetIds, "decisionNode");
+    commit((current) => current.map((node) => targetIds.has(node.id)
+      ? {
+        ...node,
+        data: {
+          ...node.data,
+          decisionNode: enabled,
+          businessNode: false,
+          handoffNode: false,
+          departmentNode: false,
+          automatedWork: false,
+          aiSolution: false,
+          repeatedWork: false,
+          humanBranch: false,
+          humanAiMix: false,
+          toolNode: false,
+          standaloneNode: false,
+          color: "rose",
+        },
+      }
+      : node));
+    setMenu(null);
+  };
+
+  const toggleHandoffNode = (id: string) => {
+    const targetIds = markerTargetIds(id);
+    const enabled = shouldMarkTargets(targetIds, "handoffNode");
+    commit((current) => current.map((node) => targetIds.has(node.id)
+      ? {
+        ...node,
+        data: {
+          ...node.data,
+          handoffNode: enabled,
+          decisionNode: false,
+          businessNode: false,
+          departmentNode: false,
+          automatedWork: false,
+          aiSolution: false,
+          repeatedWork: false,
+          humanBranch: false,
+          humanAiMix: false,
+          toolNode: false,
+          standaloneNode: false,
+          color: "cyan",
         },
       }
       : node));
@@ -1647,6 +1824,80 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   }, []);
 
   const menuNode = menu ? nodes.find((node) => node.id === menu.id) : null;
+  const menuTargetNodes = menuNode?.data.uiSelected && selectedCount > 1
+    ? nodes.filter((node) => node.data.uiSelected)
+    : menuNode ? [menuNode] : [];
+  const allMenuTargetsMarked = (flag: MarkerFlag) => menuTargetNodes.length > 0
+    && menuTargetNodes.every((node) => Boolean(node.data[flag]));
+  const hierarchyChildren = new Map<string | null, MapNode[]>();
+  nodes.forEach((node) => {
+    const siblings = hierarchyChildren.get(node.data.parentId) ?? [];
+    siblings.push(node);
+    hierarchyChildren.set(node.data.parentId, siblings);
+  });
+  hierarchyChildren.forEach((siblings) => siblings.sort((a, b) => (
+    a.data.sortOrder - b.data.sortOrder || a.data.heading.localeCompare(b.data.heading)
+  )));
+
+  const focusHierarchyNode = (node: MapNode) => {
+    selectedNodeIds.current = new Set([node.id]);
+    setSelectedId(node.id);
+    setSelectedCount(1);
+    setSelectedConnectionId(null);
+    setNodes((current) => hydrateActions(current.map((item) => ({
+      ...item,
+      selected: item.id === node.id,
+      data: { ...item.data, uiSelected: item.id === node.id },
+    }))));
+    const instance = flowInstance.current;
+    if (!instance) return;
+    const width = node.measured?.width ?? estimateNodeWidth(node.data);
+    const height = node.measured?.height ?? 90;
+    void instance.setCenter(node.position.x + (width / 2), node.position.y + (height / 2), {
+      zoom: Math.max(instance.getZoom(), 0.72),
+      duration: 320,
+    });
+  };
+
+  const renderHierarchyNodes = (parentId: string | null, depth: number, ancestors = new Set<string>()): ReactNode => (
+    (hierarchyChildren.get(parentId) ?? []).map((node) => {
+      if (ancestors.has(node.id)) return null;
+      const children = hierarchyChildren.get(node.id) ?? [];
+      const hasChildren = children.length > 0;
+      const expanded = hasChildren && (hierarchyNodeOverrides[node.id] ?? depth < 2);
+      const nextAncestors = new Set(ancestors);
+      nextAncestors.add(node.id);
+      const badges = hierarchyBadges(node.data);
+      return (
+        <li key={node.id} className="hierarchy-item">
+          <div className={`hierarchy-row ${node.data.uiSelected ? "is-current" : ""}`} style={{ paddingLeft: 8 + (depth * 14) }}>
+            {hasChildren ? (
+              <button
+                className="hierarchy-branch-toggle"
+                type="button"
+                aria-label={`${expanded ? "Collapse" : "Expand"} ${node.data.heading}`}
+                aria-expanded={expanded}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setHierarchyNodeOverrides((current) => ({ ...current, [node.id]: !expanded }));
+                }}
+              >
+                {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              </button>
+            ) : <span className="hierarchy-branch-spacer" />}
+            <button className="hierarchy-node-link" type="button" onClick={() => focusHierarchyNode(node)}>
+              <span className="hierarchy-node-title">{node.data.heading}</span>
+              <span className="hierarchy-node-meta">
+                {badges.map((badge) => <i key={`${node.id}-${badge.label}`} className={`hierarchy-badge tone-${badge.tone}`}>{badge.label}</i>)}
+                {hasChildren && <em>{children.length}</em>}
+              </span>
+            </button>
+          </div>
+          {expanded && <ul>{renderHierarchyNodes(node.id, depth + 1, nextAncestors)}</ul>}
+        </li>
+      );
+    })
+  );
   const mobileQuickActionLabel = interactionMode === "view"
     ? "Edit map"
     : selectedId
@@ -1727,7 +1978,50 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       </header>
 
       <section className="workspace">
-        <div className="canvas-wrap" ref={canvasWrapRef}>
+        <aside className={`hierarchy-panel ${hierarchyPanelOpen ? "is-open" : "is-collapsed"}`} aria-label="Node hierarchy">
+          <button
+            className="hierarchy-panel-toggle"
+            type="button"
+            aria-label={hierarchyPanelOpen ? "Minimize hierarchy" : "Expand hierarchy"}
+            aria-expanded={hierarchyPanelOpen}
+            onClick={(event) => {
+              event.stopPropagation();
+              setHierarchyPanelOpen((open) => !open);
+            }}
+          >
+            {hierarchyPanelOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
+            {!hierarchyPanelOpen && <span>Tree</span>}
+          </button>
+          {hierarchyPanelOpen && (
+            <div className="hierarchy-panel-inner">
+              <div className="hierarchy-panel-head">
+                <span>Map structure</span>
+                <strong>Hierarchy</strong>
+                <p>Three levels open by default</p>
+              </div>
+              <div className="hierarchy-tree" role="tree">
+                {loaded && nodes.length > 0
+                  ? <ul>{renderHierarchyNodes(null, 0)}</ul>
+                  : <span className="hierarchy-empty">No nodes yet</span>}
+              </div>
+            </div>
+          )}
+        </aside>
+        <div
+          className="canvas-wrap"
+          ref={canvasWrapRef}
+          onContextMenu={(event) => {
+            if (interactionMode === "view" || selectedNodeIds.current.size < 2) return;
+            const menuId = selectedId && selectedNodeIds.current.has(selectedId)
+              ? selectedId
+              : [...selectedNodeIds.current][0];
+            if (!menuId) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setSelectedId(menuId);
+            setMenu({ id: menuId, x: event.clientX, y: event.clientY });
+          }}
+        >
           {!loaded && <div className="loading">Opening map...</div>}
           {loaded && !nodes.length && (
             <div className="empty-map">
@@ -1793,19 +2087,27 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
               setSelectedId(null);
               setSelectedConnectionId(null);
             }}
+            onPaneContextMenu={(event) => {
+              if (interactionMode === "view" || !selectedId || selectedNodeIds.current.size < 2) return;
+              event.preventDefault();
+              setMenu({ id: selectedId, x: event.clientX, y: event.clientY });
+            }}
             onNodeDoubleClick={(_, node) => {
               if (interactionMode === "edit") editNode(node.id);
             }}
             onNodeContextMenu={(event, node) => {
               if (interactionMode === "view") return;
               event.preventDefault();
-              selectedNodeIds.current = new Set([node.id]);
-              setNodes(hydrateActions(nodes.map((item) => ({
-                ...item,
-                selected: item.id === node.id,
-                data: { ...item.data, uiSelected: item.id === node.id },
-              }))));
-              setSelectedCount(1);
+              const keepMultiSelection = selectedNodeIds.current.has(node.id) && selectedNodeIds.current.size > 1;
+              if (!keepMultiSelection) {
+                selectedNodeIds.current = new Set([node.id]);
+                setNodes(hydrateActions(nodes.map((item) => ({
+                  ...item,
+                  selected: item.id === node.id,
+                  data: { ...item.data, uiSelected: item.id === node.id },
+                }))));
+                setSelectedCount(1);
+              }
               setSelectedId(node.id);
               setMenu({ id: node.id, x: event.clientX, y: event.clientY });
             }}
@@ -1842,7 +2144,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           >
             <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} color="#d7d4cb" />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable nodeColor={(node) => node.data.aiSolution ? "#0f766e" : "#d7d3c8"} maskColor="rgba(247, 246, 241, .78)" />
+            <MiniMap pannable zoomable nodeColor={(node) => node.data.businessNode ? "#173f52" : node.data.decisionNode ? "#b84a3b" : node.data.handoffNode ? "#19758a" : node.data.aiSolution ? "#0f766e" : node.data.automatedWork ? "#b97820" : node.data.departmentNode ? "#315f78" : "#d7d3c8"} maskColor="rgba(247, 246, 241, .78)" />
           </ReactFlow>
           {phoneViewport && loaded && (
             <button
@@ -1862,18 +2164,18 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
 
       {menu && menuNode && (
         <div className="context-menu" style={{ left: menu.x, top: menu.y }} onClick={(event) => event.stopPropagation()}>
+          {menuTargetNodes.length > 1 && <span className="context-menu-selection">{menuTargetNodes.length} nodes selected</span>}
           <button onClick={() => editNode(menu.id)}><Edit3 size={15} />Edit</button>
-          <button onClick={() => addChild(menu.id)}><Plus size={15} />Add child</button>
-          <button onClick={() => addBelow(menu.id)}><Plus size={15} />Add node below</button>
-          <button onClick={() => addStandaloneNode()}><Plus size={15} />Add standalone node</button>
-          <button onClick={() => copyBranch(menu.id)}><ClipboardCopy size={15} />Copy branch</button>
-          <button onClick={() => pasteBranch(menu.id)} disabled={!branchClipboard}><ClipboardPaste size={15} />Paste as child</button>
-          <button onClick={() => duplicateNode(menu.id)}><Copy size={15} />Duplicate</button>
-          <button onClick={() => toggleAi(menu.id)}><Bot size={15} />{menuNode.data.aiSolution ? "Remove AI solution" : "Mark as AI solution"}</button>
-          <button onClick={() => toggleRepeatedWork(menu.id)}><Redo2 size={15} />{menuNode.data.repeatedWork ? "Remove repeated work" : "Mark as most repeated work"}</button>
-          <button onClick={() => toggleHumanBranch(menu.id)}><ContactRound size={15} />{menuNode.data.humanBranch ? "Remove human-only task" : "Mark as human-only task"}</button>
-          <button onClick={() => toggleHumanAiMix(menu.id)}><span className="menu-mode-icon"><ContactRound size={14} /><Sparkles size={10} /></span>{menuNode.data.humanAiMix ? "Remove Human + AI" : "Mark as Human + AI"}</button>
-          <button onClick={() => toggleToolNode(menu.id)}><Hammer size={15} />{menuNode.data.toolNode ? "Remove tool node" : "Mark as tool node"}</button>
+          <button onClick={() => toggleAi(menu.id)}><Bot size={15} />{allMenuTargetsMarked("aiSolution") ? "Remove AI solution" : "Mark as AI solution"}</button>
+          <button onClick={() => toggleAutomatedWork(menu.id)}><ServerCog size={15} />{allMenuTargetsMarked("automatedWork") ? "Remove automated work" : "Mark as automated work"}</button>
+          <button onClick={() => toggleDepartmentNode(menu.id)}><Building2 size={15} />{allMenuTargetsMarked("departmentNode") ? "Remove department" : "Mark as department"}</button>
+          <button onClick={() => toggleBusinessNode(menu.id)}><BriefcaseBusiness size={15} />{allMenuTargetsMarked("businessNode") ? "Remove business" : "Mark as business"}</button>
+          <button onClick={() => toggleDecisionNode(menu.id)}><GitFork size={15} />{allMenuTargetsMarked("decisionNode") ? "Remove decision" : "Mark as decision"}</button>
+          <button onClick={() => toggleHandoffNode(menu.id)}><ArrowRightLeft size={15} />{allMenuTargetsMarked("handoffNode") ? "Remove handoff" : "Mark as handoff"}</button>
+          <button onClick={() => toggleRepeatedWork(menu.id)}><Redo2 size={15} />{allMenuTargetsMarked("repeatedWork") ? "Remove repeated work" : "Mark as most repeated work"}</button>
+          <button onClick={() => toggleHumanBranch(menu.id)}><ContactRound size={15} />{allMenuTargetsMarked("humanBranch") ? "Remove human-only task" : "Mark as human-only task"}</button>
+          <button onClick={() => toggleHumanAiMix(menu.id)}><span className="menu-mode-icon"><ContactRound size={14} /><Sparkles size={10} /></span>{allMenuTargetsMarked("humanAiMix") ? "Remove Human + AI" : "Mark as Human + AI"}</button>
+          <button onClick={() => toggleToolNode(menu.id)}><Hammer size={15} />{allMenuTargetsMarked("toolNode") ? "Remove tool node" : "Mark as tool node"}</button>
           <div />
           <button className="danger" onClick={() => deleteNode(menu.id)}><Trash2 size={15} />Delete branch</button>
         </div>

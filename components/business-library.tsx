@@ -1,12 +1,17 @@
 "use client";
 
-import { ArrowRight, Building2, Plus, Sparkles, X } from "lucide-react";
+import { ArrowRight, Building2, ClipboardPaste, Copy, MoreHorizontal, Plus, Sparkles, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useEffectEvent, useState } from "react";
 import { createClient } from "@/lib/supabase";
 
 const BUSINESSES_KEY = "opscanvas-businesses-v2";
 const BUSINESSES_MIGRATION_KEY = "opscanvas-businesses-cloud-migrated-v1";
+const MAP_DRAFT_KEY = "opscanvas-draft-v2";
+const MAP_CONNECTIONS_KEY = "opscanvas-connections-v1";
+const MAP_VIEWPORT_KEY = "opscanvas-viewport-v2";
+const MAP_CLOUD_MIGRATION_KEY = "opscanvas-cloud-migrated-v1";
+const MAP_CLIPBOARD_KEY = "opscanvas-map-clipboard-v1";
 
 type BusinessSummary = {
   id: string;
@@ -25,6 +30,22 @@ export function BusinessLibrary() {
   const [showCreate, setShowCreate] = useState(false);
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pastingId, setPastingId] = useState<string | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [copiedBusiness, setCopiedBusiness] = useState<BusinessSummary | null>(() => {
+    if (typeof window === "undefined") return null;
+    const cachedClipboard = localStorage.getItem(MAP_CLIPBOARD_KEY);
+    if (!cachedClipboard) return null;
+    try {
+      const parsed = JSON.parse(cachedClipboard) as BusinessSummary;
+      return parsed?.id && parsed?.title ? parsed : null;
+    } catch {
+      localStorage.removeItem(MAP_CLIPBOARD_KEY);
+      return null;
+    }
+  });
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   const readLocalBusinesses = () => {
     const cached = localStorage.getItem(BUSINESSES_KEY);
@@ -61,6 +82,10 @@ export function BusinessLibrary() {
     const cloudBusinesses = data?.length ? data : localBusinesses;
     setBusinesses(cloudBusinesses);
     localStorage.setItem(BUSINESSES_KEY, JSON.stringify(cloudBusinesses));
+    if (copiedBusiness && !cloudBusinesses.some((business) => business.id === copiedBusiness.id)) {
+      setCopiedBusiness(null);
+      localStorage.removeItem(MAP_CLIPBOARD_KEY);
+    }
   });
 
   useEffect(() => {
@@ -101,6 +126,62 @@ export function BusinessLibrary() {
     setCreating(false);
   };
 
+  const removeLocalMapData = (id: string) => {
+    localStorage.removeItem(`${MAP_DRAFT_KEY}:${id}`);
+    localStorage.removeItem(`${MAP_CONNECTIONS_KEY}:${id}`);
+    localStorage.removeItem(`${MAP_VIEWPORT_KEY}:${id}`);
+    localStorage.removeItem(`${MAP_CLOUD_MIGRATION_KEY}:${id}`);
+  };
+
+  const deleteBusiness = async (business: BusinessSummary) => {
+    if (business.id === defaultBusiness.id || deletingId) return;
+    const confirmed = window.confirm(`Delete "${business.title}"? This removes the map and all of its nodes.`);
+    if (!confirmed) return;
+    const previousBusinesses = businesses;
+    const nextBusinesses = businesses.filter((item) => item.id !== business.id);
+    setDeletingId(business.id);
+    setBusinesses(nextBusinesses);
+    localStorage.setItem(BUSINESSES_KEY, JSON.stringify(nextBusinesses));
+    const { error } = await createClient().from("business_maps").delete().eq("id", business.id);
+    if (error) {
+      setBusinesses(previousBusinesses);
+      localStorage.setItem(BUSINESSES_KEY, JSON.stringify(previousBusinesses));
+    } else {
+      removeLocalMapData(business.id);
+      if (copiedBusiness?.id === business.id) {
+        setCopiedBusiness(null);
+        localStorage.removeItem(MAP_CLIPBOARD_KEY);
+      }
+    }
+    setDeletingId(null);
+  };
+
+  const copyBusiness = (business: BusinessSummary) => {
+    setCopiedBusiness(business);
+    localStorage.setItem(MAP_CLIPBOARD_KEY, JSON.stringify(business));
+    setOpenMenuId(null);
+    setActionMessage(`Copied "${business.title}". Choose another map and paste it there.`);
+  };
+
+  const pasteBusiness = async (target: BusinessSummary) => {
+    if (!copiedBusiness || copiedBusiness.id === target.id || pastingId) return;
+    setPastingId(target.id);
+    setOpenMenuId(null);
+    setActionMessage(`Pasting "${copiedBusiness.title}" into "${target.title}"...`);
+    const { data, error } = await createClient().rpc("copy_business_map_into", {
+      p_source_map_id: copiedBusiness.id,
+      p_target_map_id: target.id,
+    });
+    if (error) {
+      setActionMessage(`Could not paste the map. ${error.message}`);
+    } else {
+      removeLocalMapData(target.id);
+      const nodeCount = typeof data === "number" ? data : 0;
+      setActionMessage(`Pasted ${nodeCount} nodes from "${copiedBusiness.title}" into "${target.title}".`);
+    }
+    setPastingId(null);
+  };
+
   return (
     <main className="library-shell">
       <header className="library-topbar">
@@ -115,14 +196,59 @@ export function BusinessLibrary() {
 
         <div className="business-grid">
           {businesses.map((business, index) => (
-            <Link className="business-card" href={`/maps/${business.id}?title=${encodeURIComponent(business.title)}`} key={business.id}>
-              <div className="business-card-top"><span>{String(index + 1).padStart(2, "0")}</span><Building2 size={20} /></div>
-              <div><h2>{business.title}</h2><p>Open operating tree</p></div>
-              <ArrowRight className="business-arrow" size={20} />
-            </Link>
+            <article className="business-card" key={business.id}>
+              <Link className="business-card-link" href={`/maps/${business.id}?title=${encodeURIComponent(business.title)}`}>
+                <div className="business-card-top"><span>{String(index + 1).padStart(2, "0")}</span><Building2 size={20} /></div>
+                <div><h2>{business.title}</h2><p>Open operating tree</p></div>
+                <ArrowRight className="business-arrow" size={20} />
+              </Link>
+              <div className="business-card-menu">
+                <button
+                  className="business-menu-trigger"
+                  onClick={() => setOpenMenuId((current) => current === business.id ? null : business.id)}
+                  aria-expanded={openMenuId === business.id}
+                  aria-haspopup="menu"
+                  title={`Actions for ${business.title}`}
+                  aria-label={`Actions for ${business.title}`}
+                >
+                  <MoreHorizontal size={18} />
+                </button>
+                {openMenuId === business.id && (
+                  <div className="business-menu-popover" role="menu">
+                    <button role="menuitem" onClick={() => copyBusiness(business)}>
+                      <Copy size={15} />Copy map
+                    </button>
+                    <button
+                      role="menuitem"
+                      onClick={() => void pasteBusiness(business)}
+                      disabled={!copiedBusiness || copiedBusiness.id === business.id || pastingId !== null}
+                    >
+                      <ClipboardPaste size={15} />
+                      {pastingId === business.id ? "Pasting..." : "Paste here"}
+                    </button>
+                    {business.id !== defaultBusiness.id && (
+                      <button
+                        className="danger"
+                        role="menuitem"
+                        onClick={() => { setOpenMenuId(null); void deleteBusiness(business); }}
+                        disabled={deletingId !== null}
+                      >
+                        <Trash2 size={15} />Delete map
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </article>
           ))}
           <button className="business-card add-business-card" onClick={() => setShowCreate(true)}><Plus size={25} /><span>Add another business</span></button>
         </div>
+        {actionMessage && (
+          <div className="library-action-message" role="status">
+            <span>{actionMessage}</span>
+            <button onClick={() => setActionMessage(null)} aria-label="Dismiss message"><X size={14} /></button>
+          </div>
+        )}
       </section>
 
       {showCreate && (

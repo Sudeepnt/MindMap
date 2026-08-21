@@ -50,7 +50,7 @@ const STORAGE_KEY = "opscanvas-draft-v2";
 const VIEWPORT_KEY = "opscanvas-viewport-v2";
 const CONNECTIONS_KEY = "opscanvas-connections-v1";
 const CLOUD_MIGRATION_KEY = "opscanvas-cloud-migrated-v1";
-const BRANCH_CLIPBOARD_KEY = "opscanvas-branch-clipboard-v1";
+const BRANCH_CLIPBOARD_KEY = "opscanvas-branch-clipboard-v2";
 const X_GAP = 330;
 const Y_GAP = 150;
 const CIRCLE_SIDE_GAP = 74;
@@ -107,6 +107,7 @@ type SeedOptions = {
   aiSolution?: boolean;
   repeatedWork?: boolean;
   humanBranch?: boolean;
+  humanAiMix?: boolean;
   toolNode?: boolean;
   standaloneNode?: boolean;
   shape?: MapNodeData["shape"];
@@ -179,6 +180,7 @@ function makeNode(
       aiSolution: options.aiSolution ?? false,
       repeatedWork: options.repeatedWork ?? false,
       humanBranch: options.humanBranch ?? false,
+      humanAiMix: options.humanAiMix ?? false,
       toolNode: options.toolNode ?? false,
       standaloneNode: options.standaloneNode ?? false,
       shape: options.shape ?? "box",
@@ -202,6 +204,7 @@ function fromStoredNode(item: StoredNode): MapNode {
       aiSolution: item.ai_solution,
       repeatedWork: item.repeated_work ?? false,
       humanBranch: item.human_branch ?? false,
+      humanAiMix: item.human_ai_mix ?? false,
       toolNode: item.tool_node ?? false,
       standaloneNode: item.standalone_node ?? false,
       shape: item.node_shape ?? "box",
@@ -237,6 +240,7 @@ function mergeLocalVisualState(nextNodes: MapNode[], localNodes: MapNode[] | nul
           aiSolution: Boolean(localNode.data.aiSolution),
           repeatedWork: Boolean(localNode.data.repeatedWork),
           humanBranch: Boolean(localNode.data.humanBranch),
+          humanAiMix: Boolean(localNode.data.humanAiMix),
           toolNode: Boolean(localNode.data.toolNode),
           standaloneNode: Boolean(localNode.data.standaloneNode),
           shape: localNode.data.shape ?? node.data.shape,
@@ -286,8 +290,11 @@ function estimateNodeWidth(data: MapNodeData): number {
     const sizeClass = nodeSizeClass(data);
     return sizeClass === "is-extra-wide" ? 250 : sizeClass === "is-wide" ? 220 : 190;
   }
+  if (data.aiSolution) return 310;
+  if (data.toolNode) return 310;
   if (data.standaloneNode) return 300;
-  if (data.humanBranch) return 280;
+  if (data.humanBranch) return 320;
+  if (data.humanAiMix) return 310;
   const sizeClass = nodeSizeClass(data);
   return sizeClass === "is-extra-wide" ? 310 : sizeClass === "is-wide" ? 270 : 230;
 }
@@ -304,7 +311,7 @@ function layoutTree(nodes: MapNode[]): MapNode[] {
   if (!nodes.length) return nodes;
   const byParent = new Map<string | null, MapNode[]>();
   nodes.forEach((node) => {
-    if (node.data.placement === "below") return;
+    if (node.data.placement === "below" || node.data.placement === "above") return;
     const group = byParent.get(node.data.parentId) ?? [];
     group.push(node);
     byParent.set(node.data.parentId, group);
@@ -317,6 +324,10 @@ function layoutTree(nodes: MapNode[]): MapNode[] {
 
   const estimatedHeight = (node: MapNode) => {
     if (node.data.shape === "circle") return 220;
+    if (node.data.aiSolution && node.data.shape !== "diamond") return 138;
+    if (node.data.toolNode && node.data.shape !== "diamond") return 138;
+    if (node.data.humanBranch) return 166;
+    if (node.data.humanAiMix) return 138;
     if (node.data.shape !== "diamond") return node.data.description ? 96 : 54;
     const sizeClass = nodeSizeClass(node.data);
     return sizeClass === "is-extra-wide" ? 250 : sizeClass === "is-wide" ? 220 : 190;
@@ -367,7 +378,7 @@ function layoutTree(nodes: MapNode[]): MapNode[] {
     const children = [
       ...(byParent.get(node.id) ?? []),
       ...nodes
-        .filter((child) => child.data.parentId === node.id && child.data.placement === "below")
+        .filter((child) => child.data.parentId === node.id && (child.data.placement === "above" || child.data.placement === "below"))
         .sort((a, b) => a.data.sortOrder - b.data.sortOrder),
     ];
     children.forEach((child) => applyLockedOffsets(child, nextOffsetX, nextOffsetY));
@@ -431,6 +442,18 @@ function layoutTree(nodes: MapNode[]): MapNode[] {
       belowY += estimatedHeight(child) + 44;
       placeMixedBranches(child);
     });
+
+    const aboveChildren = nodes
+      .filter((child) => child.data.parentId === node.id && child.data.placement === "above")
+      .sort((a, b) => a.data.sortOrder - b.data.sortOrder);
+    let aboveY = parentPosition.y - 70;
+    aboveChildren.forEach((child) => {
+      const childHeight = estimatedHeight(child);
+      aboveY -= childHeight;
+      positions.set(child.id, { x: parentPosition.x, y: aboveY });
+      aboveY -= 44;
+      placeMixedBranches(child);
+    });
   };
   (byParent.get(null) ?? []).forEach(placeMixedBranches);
   nodes.forEach((node) => {
@@ -476,7 +499,7 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
   const sizeClass = nodeSizeClass(data);
   const showSideAddControls = hasSideAddControls(data.shape);
   return (
-    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""} ${data.humanBranch ? "is-human" : ""} ${data.toolNode ? "is-tool" : ""} ${data.standaloneNode ? "is-standalone" : ""}`}>
+    <div className={`map-node shape-${data.shape ?? "box"} color-${data.color ?? "default"} ${sizeClass} ${!data.description ? "is-compact" : ""} ${selected || data.uiSelected ? "is-selected" : ""} ${data.aiSolution ? "is-ai" : ""} ${data.repeatedWork ? "is-repeated" : ""} ${data.humanBranch ? "is-human" : ""} ${data.humanAiMix ? "is-human-ai" : ""} ${data.toolNode ? "is-tool" : ""} ${data.standaloneNode ? "is-standalone" : ""}`}>
       <Handle id="left-target" type="target" position={Position.Left} className="node-handle" isConnectable={false} />
       <Handle id="right-target" type="target" position={Position.Right} className="node-handle target-only" isConnectable={false} />
       <Handle id="top-target" type="target" position={Position.Top} className="node-handle vertical-handle" isConnectable={false} />
@@ -494,27 +517,57 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
         {data.collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
         {data.collapsed && <span>{data.childCount}</span>}
       </button>
-      {data.aiSolution && (
-        <span className="ai-badge"><Sparkles size={11} /> AI solution</span>
-      )}
       {data.repeatedWork && (
         <span className="repeated-badge"><Redo2 size={11} /> Most repeated work</span>
-      )}
-      {data.toolNode && (
-        <span className="tool-badge"><Hammer size={11} /> Tool node</span>
       )}
       {data.standaloneNode && (
         <span className="standalone-badge">Main step context</span>
       )}
-      {data.humanBranch ? (
+      {data.aiSolution ? (
+        <div className="ai-node-content">
+          <span className="ai-node-avatar" aria-hidden="true">
+            <Sparkles size={29} strokeWidth={1.8} />
+          </span>
+          <div className="ai-node-copy">
+            <span className="ai-solution-badge">AI solution</span>
+            <strong>{data.heading}</strong>
+            {data.description && <p>{data.description}</p>}
+          </div>
+        </div>
+      ) : data.toolNode ? (
+        <div className="tool-node-content">
+          <span className="tool-node-avatar" aria-hidden="true">
+            <Hammer size={28} strokeWidth={1.8} />
+          </span>
+          <div className="tool-node-copy">
+            <span className="tool-node-badge">Tool node</span>
+            <strong>{data.heading}</strong>
+            {data.description && <p>{data.description}</p>}
+          </div>
+        </div>
+      ) : data.humanAiMix ? (
+        <div className="human-ai-node-content">
+          <span className="human-ai-node-avatar" aria-hidden="true">
+            <ContactRound size={24} strokeWidth={1.6} />
+            <Sparkles size={17} strokeWidth={1.8} />
+          </span>
+          <div className="human-node-copy">
+            <span className="human-ai-badge">Human + AI</span>
+            <strong>{data.heading}</strong>
+            {data.description && <p>{data.description}</p>}
+            <span className="task-mode-note">Human leads <i /> AI assists</span>
+          </div>
+        </div>
+      ) : data.humanBranch ? (
         <div className="human-node-content">
           <span className="human-node-avatar" aria-hidden="true">
             <ContactRound size={26} strokeWidth={1.6} />
           </span>
           <div className="human-node-copy">
-            <span className="human-badge">Human branch</span>
+            <span className="human-badge">Human only</span>
             <strong>{data.heading}</strong>
             {data.description && <p>{data.description}</p>}
+            <span className="task-mode-note">Judgment <i /> Ownership <i /> No AI handoff</span>
           </div>
         </div>
       ) : (
@@ -547,6 +600,14 @@ function BusinessNode({ id, data, selected }: NodeProps<MapNode>) {
         ))
       ) : (
         <>
+          <button
+            className="add-control add-above nodrag"
+            onClick={() => data.onAddAtPlacement?.(id, "above")}
+            aria-label="Add node above"
+            title="Add node above"
+          >
+            <Plus size={15} />
+          </button>
           <button className="add-control add-child nodrag" onClick={() => data.onAddChild?.(id)} aria-label="Add child">
             <Plus size={16} />
             <span>Add child</span>
@@ -564,8 +625,8 @@ const nodeTypes = { businessNode: BusinessNode };
 
 type EditorState = { id: string | null; parentId: string | null; heading: string; description: string; shape: MapNodeData["shape"]; color: MapNodeData["color"] };
 type MenuState = { id: string; x: number; y: number } | null;
-type BranchClipboard = { rootId: string; nodes: MapNode[] } | null;
 type StoredMapConnection = Pick<Edge, "id" | "source" | "target" | "sourceHandle" | "targetHandle">;
+type BranchClipboard = { rootIds: string[]; nodes: MapNode[]; connections: StoredMapConnection[] } | null;
 
 function readBranchClipboard(): BranchClipboard {
   if (typeof window === "undefined") return null;
@@ -573,18 +634,32 @@ function readBranchClipboard(): BranchClipboard {
   if (!cached) return null;
   try {
     const parsed = JSON.parse(cached) as unknown;
-    if (
-      !parsed
-      || typeof parsed !== "object"
-      || !("rootId" in parsed)
-      || !("nodes" in parsed)
-      || typeof parsed.rootId !== "string"
-      || !Array.isArray(parsed.nodes)
-    ) throw new Error("Invalid clipboard data");
+    if (!parsed || typeof parsed !== "object" || !("nodes" in parsed) || !Array.isArray(parsed.nodes)) {
+      throw new Error("Invalid clipboard data");
+    }
+    const rootIds = "rootIds" in parsed && Array.isArray(parsed.rootIds)
+      ? parsed.rootIds.filter((id): id is string => typeof id === "string")
+      : "rootId" in parsed && typeof parsed.rootId === "string"
+        ? [parsed.rootId]
+        : [];
+    if (!rootIds.length) throw new Error("Invalid clipboard roots");
+    const parsedConnections = "connections" in parsed && Array.isArray(parsed.connections)
+      ? parsed.connections
+      : [];
     return {
-      rootId: parsed.rootId,
+      rootIds,
       nodes: parsed.nodes.filter((item): item is MapNode => Boolean(
         item && typeof item === "object" && "id" in item && "data" in item && "position" in item,
+      )),
+      connections: parsedConnections.filter((item): item is StoredMapConnection => Boolean(
+        item
+        && typeof item === "object"
+        && "id" in item
+        && "source" in item
+        && "target" in item
+        && typeof item.id === "string"
+        && typeof item.source === "string"
+        && typeof item.target === "string",
       )),
     };
   } catch {
@@ -610,6 +685,8 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [branchClipboard, setBranchClipboard] = useState<BranchClipboard>(() => readBranchClipboard());
   const [selectedCount, setSelectedCount] = useState(0);
+  const [clipboardMessage, setClipboardMessage] = useState<string | null>(null);
+  const [cloudSaveStatus, setCloudSaveStatus] = useState<"loading" | "saving" | "saved" | "local">("loading");
   const [connections, setConnections] = useState<StoredMapConnection[]>([]);
   const [connectionsVisible, setConnectionsVisible] = useState(true);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
@@ -633,11 +710,16 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   const lastPersistedSnapshot = useRef<string | null>(null);
   const latestSnapshot = useRef<string | null>(null);
   const cloudRetryTimer = useRef<number | null>(null);
+  const cloudRetryAttempt = useRef(0);
   const realtimeRefreshTimer = useRef<number | null>(null);
   const viewportSaveTimer = useRef<number | null>(null);
   const pendingFocusNodeId = useRef<string | null>(null);
   const pendingStandalonePosition = useRef<XYPosition | null>(null);
   const pendingStandaloneNode = useRef(false);
+  const latestNodes = useRef<MapNode[]>([]);
+  const latestConnections = useRef<StoredMapConnection[]>([]);
+  latestNodes.current = nodes;
+  latestConnections.current = connections;
 
   const closeEditor = () => {
     pendingStandalonePosition.current = null;
@@ -805,7 +887,13 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     delete data.uiSelected;
     delete data.childCount;
     delete data.connectionTargetVisible;
-    return { ...node, selected: false, data };
+    return {
+      id: node.id,
+      type: "businessNode",
+      position: { ...node.position },
+      selected: false,
+      data,
+    };
   }
 
   const nodeRows = (current: MapNode[]) => current.map(stripActions).map((node) => ({
@@ -820,6 +908,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     ai_solution: node.data.aiSolution,
     repeated_work: node.data.repeatedWork ?? false,
     human_branch: node.data.humanBranch ?? false,
+    human_ai_mix: node.data.humanAiMix ?? false,
     tool_node: node.data.toolNode ?? false,
     standalone_node: node.data.standaloneNode ?? false,
     node_shape: node.data.shape ?? "box",
@@ -851,42 +940,66 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     connections: currentConnections,
   });
 
+  const saveLocalState = (currentNodes: MapNode[], currentConnections: StoredMapConnection[]) => {
+    const cleanNodes = currentNodes.map(stripActions);
+    localStorage.setItem(mapStorageKey, JSON.stringify(cleanNodes));
+    localStorage.setItem(mapConnectionsKey, JSON.stringify(currentConnections));
+    return { cleanNodes, snapshot: stateSnapshot(cleanNodes, currentConnections) };
+  };
+
   const flushCloudSave = async () => {
     if (cloudSaveRunning.current) return;
     cloudSaveRunning.current = true;
+    setCloudSaveStatus("saving");
     while (cloudSaveQueue.current) {
       const queued = cloudSaveQueue.current;
       cloudSaveQueue.current = null;
       const error = await saveCloudState(queued.nodes, queued.connections);
       if (error) {
         localStorage.removeItem(mapCloudMigrationKey);
-        cloudSaveQueue.current = queued;
+        // A newer edit may have queued while this request was in flight. Never
+        // replace that newer full-state snapshot with the failed older one.
+        if (!cloudSaveQueue.current) cloudSaveQueue.current = queued;
+        setCloudSaveStatus("local");
         if (cloudRetryTimer.current) window.clearTimeout(cloudRetryTimer.current);
-        cloudRetryTimer.current = window.setTimeout(() => void flushCloudSave(), 1000);
+        const retryDelay = Math.min(1000 * (2 ** cloudRetryAttempt.current), 30000);
+        cloudRetryAttempt.current += 1;
+        cloudRetryTimer.current = window.setTimeout(() => void flushCloudSave(), retryDelay);
         break;
       }
+      cloudRetryAttempt.current = 0;
       lastPersistedSnapshot.current = stateSnapshot(queued.nodes, queued.connections);
-      latestSnapshot.current = lastPersistedSnapshot.current;
       localStorage.setItem(mapCloudMigrationKey, "true");
     }
     cloudSaveRunning.current = false;
+    if (!cloudSaveQueue.current) setCloudSaveStatus("saved");
   };
 
   const queueSave = useEffectEvent((currentNodes: MapNode[], currentConnections: StoredMapConnection[]) => {
-    const cleanNodes = currentNodes.map(stripActions);
-    localStorage.setItem(mapStorageKey, JSON.stringify(cleanNodes));
-    localStorage.setItem(mapConnectionsKey, JSON.stringify(currentConnections));
-    const snapshot = stateSnapshot(cleanNodes, currentConnections);
+    const { cleanNodes, snapshot } = saveLocalState(currentNodes, currentConnections);
     latestSnapshot.current = snapshot;
-    if (lastPersistedSnapshot.current === snapshot) return;
+    if (lastPersistedSnapshot.current === snapshot) {
+      setCloudSaveStatus("saved");
+      return;
+    }
     if (cloudSnapshotToSkip.current === snapshot) {
       cloudSnapshotToSkip.current = null;
       lastPersistedSnapshot.current = snapshot;
       latestSnapshot.current = snapshot;
+      setCloudSaveStatus("saved");
       return;
     }
+    setCloudSaveStatus("saving");
     cloudSaveQueue.current = { nodes: cleanNodes, connections: currentConnections };
     void flushCloudSave();
+  });
+
+  const preserveLatestLocalState = useEffectEvent(() => {
+    if (!loaded) return;
+    const { snapshot } = saveLocalState(latestNodes.current, latestConnections.current);
+    if (snapshot !== lastPersistedSnapshot.current) {
+      localStorage.removeItem(mapCloudMigrationKey);
+    }
   });
 
   const parseLocalNodes = (): MapNode[] | null => {
@@ -981,18 +1094,27 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
 
     if (nodeError || connectionError || mapError) {
       applyLoadedState(fallbackNodes, localConnections, localViewport);
+      cloudSnapshotToSkip.current = null;
+      lastPersistedSnapshot.current = null;
+      localStorage.removeItem(mapCloudMigrationKey);
+      setCloudSaveStatus("local");
       return;
     }
 
     const needsLocalMigration = Boolean(localNodes) && localStorage.getItem(mapCloudMigrationKey) !== "true";
     if (needsLocalMigration || !cloudMap) {
       applyLoadedState(fallbackNodes, localConnections, localViewport);
+      setCloudSaveStatus("saving");
       const error = await saveCloudState(fallbackNodes, localConnections);
-      if (!error) localStorage.setItem(mapCloudMigrationKey, "true");
+      if (!error) {
+        localStorage.setItem(mapCloudMigrationKey, "true");
+        setCloudSaveStatus("saved");
+      }
       else {
         cloudSnapshotToSkip.current = null;
         lastPersistedSnapshot.current = null;
         localStorage.removeItem(mapCloudMigrationKey);
+        setCloudSaveStatus("local");
       }
       return;
     }
@@ -1013,8 +1135,10 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       cloudSnapshotToSkip.current = null;
       lastPersistedSnapshot.current = null;
       localStorage.removeItem(mapCloudMigrationKey);
+      setCloudSaveStatus("saving");
     } else {
       localStorage.setItem(mapCloudMigrationKey, "true");
+      setCloudSaveStatus("saved");
     }
   });
 
@@ -1027,6 +1151,16 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     if (!loaded) return;
     queueSave(nodes, connections);
   }, [nodes, connections, loaded]);
+
+  useEffect(() => {
+    const preserveBeforeExit = () => preserveLatestLocalState();
+    window.addEventListener("pagehide", preserveBeforeExit);
+    window.addEventListener("beforeunload", preserveBeforeExit);
+    return () => {
+      window.removeEventListener("pagehide", preserveBeforeExit);
+      window.removeEventListener("beforeunload", preserveBeforeExit);
+    };
+  }, []);
 
   useEffect(() => {
     const focusId = pendingFocusNodeId.current;
@@ -1131,7 +1265,6 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       type: "smoothstep",
       className: "relation-edge",
       selected,
-      zIndex: 2,
       pathOptions: {
         borderRadius: 16,
         offset: 24,
@@ -1242,6 +1375,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
       aiSolution: source.data.aiSolution,
       repeatedWork: source.data.repeatedWork,
       humanBranch: source.data.humanBranch,
+      humanAiMix: source.data.humanAiMix,
       toolNode: source.data.toolNode,
       standaloneNode: source.data.standaloneNode,
       shape: source.data.shape,
@@ -1261,14 +1395,27 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
   };
 
   const copyBranch = (id: string) => {
-    const branchIds = descendantsOf(nodes, id);
-    branchIds.add(id);
+    const selectedIds = selectedNodeIds.current.has(id) && selectedNodeIds.current.size > 1
+      ? [...selectedNodeIds.current]
+      : [id];
+    const branchIds = new Set<string>();
+    selectedIds.forEach((selectedNodeId) => {
+      branchIds.add(selectedNodeId);
+      descendantsOf(nodes, selectedNodeId).forEach((descendantId) => branchIds.add(descendantId));
+    });
+    const rootIds = nodes
+      .filter((node) => branchIds.has(node.id) && (!node.data.parentId || !branchIds.has(node.data.parentId)))
+      .map((node) => node.id);
     const nextClipboard = {
-      rootId: id,
+      rootIds,
       nodes: nodes.filter((node) => branchIds.has(node.id)).map(stripActions),
+      connections: connections.filter((connection) => (
+        branchIds.has(connection.source) && branchIds.has(connection.target)
+      )),
     };
     setBranchClipboard(nextClipboard);
     localStorage.setItem(BRANCH_CLIPBOARD_KEY, JSON.stringify(nextClipboard));
+    setClipboardMessage(`${nextClipboard.nodes.length} nodes copied`);
     setMenu(null);
   };
 
@@ -1276,8 +1423,10 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
     if (!branchClipboard) return;
     const idMap = new Map(branchClipboard.nodes.map((node) => [node.id, crypto.randomUUID()]));
     const nextSortOrder = nodes.filter((node) => node.data.parentId === targetId).length;
+    const rootIndex = new Map(branchClipboard.rootIds.map((rootId, index) => [rootId, index]));
     const copies = branchClipboard.nodes.map((node) => {
-      const isRoot = node.id === branchClipboard.rootId;
+      const copiedRootIndex = rootIndex.get(node.id);
+      const isRoot = copiedRootIndex !== undefined;
       return {
         ...node,
         id: idMap.get(node.id)!,
@@ -1286,15 +1435,23 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
         data: {
           ...node.data,
           parentId: isRoot ? targetId : idMap.get(node.data.parentId!)!,
-          sortOrder: isRoot ? nextSortOrder : node.data.sortOrder,
+          sortOrder: isRoot ? nextSortOrder + copiedRootIndex : node.data.sortOrder,
           placement: isRoot ? "right" : node.data.placement,
           collapsed: false,
           positionLocked: false,
         },
       } satisfies MapNode;
     });
+    const copiedConnections = branchClipboard.connections.map((connection) => ({
+      ...connection,
+      id: `relation-${crypto.randomUUID()}`,
+      source: idMap.get(connection.source)!,
+      target: idMap.get(connection.target)!,
+    }));
     commit((current) => [...current, ...copies]);
-    pendingFocusNodeId.current = idMap.get(branchClipboard.rootId)!;
+    setConnections((current) => [...current, ...copiedConnections]);
+    pendingFocusNodeId.current = idMap.get(branchClipboard.rootIds[0])!;
+    setClipboardMessage(`${copies.length} nodes pasted`);
     setMenu(null);
   };
 
@@ -1306,6 +1463,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           ...node.data,
           aiSolution: !node.data.aiSolution,
           humanBranch: false,
+          humanAiMix: false,
           toolNode: false,
           standaloneNode: false,
         },
@@ -1322,6 +1480,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           ...node.data,
           repeatedWork: !node.data.repeatedWork,
           humanBranch: false,
+          humanAiMix: false,
           toolNode: false,
           standaloneNode: false,
         },
@@ -1337,11 +1496,32 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
         data: {
           ...node.data,
           humanBranch: !node.data.humanBranch,
+          humanAiMix: false,
           aiSolution: false,
           repeatedWork: false,
           toolNode: false,
           shape: "box",
           color: "slate",
+          standaloneNode: false,
+        },
+      }
+      : node));
+    setMenu(null);
+  };
+
+  const toggleHumanAiMix = (id: string) => {
+    commit((current) => current.map((node) => node.id === id
+      ? {
+        ...node,
+        data: {
+          ...node.data,
+          humanAiMix: !node.data.humanAiMix,
+          humanBranch: false,
+          aiSolution: false,
+          repeatedWork: false,
+          toolNode: false,
+          shape: "box",
+          color: "indigo",
           standaloneNode: false,
         },
       }
@@ -1359,6 +1539,7 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           aiSolution: false,
           repeatedWork: false,
           humanBranch: false,
+          humanAiMix: false,
           standaloneNode: false,
           shape: "box",
           color: "lavender",
@@ -1535,6 +1716,13 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           <button onClick={(event) => { event.stopPropagation(); undo(); }} disabled={!historyState.canUndo} title="Undo"><Undo2 size={17} /></button>
           <button onClick={(event) => { event.stopPropagation(); redo(); }} disabled={!historyState.canRedo} title="Redo"><Redo2 size={17} /></button>
           {selectedCount > 1 && <span className="selection-count">{selectedCount} nodes selected</span>}
+          {clipboardMessage && <span className="selection-count">{clipboardMessage}</span>}
+          <span className={`cloud-save-status is-${cloudSaveStatus}`}>
+            {cloudSaveStatus === "loading" && "Checking Supabase"}
+            {cloudSaveStatus === "saving" && "Saving..."}
+            {cloudSaveStatus === "saved" && "Saved to Supabase"}
+            {cloudSaveStatus === "local" && "Saved locally, retrying"}
+          </span>
         </div>
       </header>
 
@@ -1683,7 +1871,8 @@ function BusinessMapCanvas({ mapId, mapTitle }: { mapId: string; mapTitle: strin
           <button onClick={() => duplicateNode(menu.id)}><Copy size={15} />Duplicate</button>
           <button onClick={() => toggleAi(menu.id)}><Bot size={15} />{menuNode.data.aiSolution ? "Remove AI solution" : "Mark as AI solution"}</button>
           <button onClick={() => toggleRepeatedWork(menu.id)}><Redo2 size={15} />{menuNode.data.repeatedWork ? "Remove repeated work" : "Mark as most repeated work"}</button>
-          <button onClick={() => toggleHumanBranch(menu.id)}><ContactRound size={15} />{menuNode.data.humanBranch ? "Remove human branch" : "Mark as human branch"}</button>
+          <button onClick={() => toggleHumanBranch(menu.id)}><ContactRound size={15} />{menuNode.data.humanBranch ? "Remove human-only task" : "Mark as human-only task"}</button>
+          <button onClick={() => toggleHumanAiMix(menu.id)}><span className="menu-mode-icon"><ContactRound size={14} /><Sparkles size={10} /></span>{menuNode.data.humanAiMix ? "Remove Human + AI" : "Mark as Human + AI"}</button>
           <button onClick={() => toggleToolNode(menu.id)}><Hammer size={15} />{menuNode.data.toolNode ? "Remove tool node" : "Mark as tool node"}</button>
           <div />
           <button className="danger" onClick={() => deleteNode(menu.id)}><Trash2 size={15} />Delete branch</button>

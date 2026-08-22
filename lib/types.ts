@@ -16,6 +16,8 @@ export type MapNodeData = {
   decisionNode?: boolean;
   handoffNode?: boolean;
   databaseNode?: boolean;
+  agencyNode?: boolean;
+  clientNode?: boolean;
   toolNode?: boolean;
   standaloneNode?: boolean;
   shape: "box" | "diamond" | "rounded" | "circle";
@@ -53,6 +55,8 @@ export type StoredNode = {
   decision_node: boolean;
   handoff_node: boolean;
   database_node: boolean;
+  agency_node: boolean;
+  client_node: boolean;
   tool_node: boolean;
   standalone_node: boolean;
   node_shape: "box" | "diamond" | "rounded" | "circle";
